@@ -58,6 +58,7 @@ namespace AnimationRecorder
             float camOffsetY = parsedArgs.ContainsKey("--cam-offset-y") ? float.Parse(parsedArgs["--cam-offset-y"]) : 2.0f;
             float camFov = parsedArgs.ContainsKey("--cam-fov") ? float.Parse(parsedArgs["--cam-fov"]) : 0f;
             float camDistance = parsedArgs.ContainsKey("--cam-distance") ? float.Parse(parsedArgs["--cam-distance"]) : 1.0f;
+            string animFilter = parsedArgs.ContainsKey("--anim") ? parsedArgs["--anim"] : "";
 
             if (!File.Exists(gfpakPath))
             {
@@ -71,7 +72,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camFov, camDistance, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camFov, camDistance, animFilter, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -82,7 +83,7 @@ namespace AnimationRecorder
 
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
-                                  float camOffsetY, float camFov, float camDistance, Dictionary<string, string> parsedArgs)
+                                  float camOffsetY, float camFov, float camDistance, string animFilter, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -270,51 +271,12 @@ namespace AnimationRecorder
                     Thread.Sleep(50);
                 }
 
-                // Quick test mode: 9 direction screenshots + animation list
+                // --test8: just list animation names
                 if (parsedArgs.ContainsKey("--test8"))
                 {
-                    // Output animation names
                     foreach (var anim in animNodes)
-                        Console.WriteLine("ANIM:" + anim.Text);
-
-                    Console.WriteLine("[Recorder] TEST MODE: 9 directions...");
-                    string testDir = Path.Combine(outputDir, "_test");
-                    Directory.CreateDirectory(testDir);
-
-                    GFBANM firstAnim = animNodes[0];
-                    STAnimation animCtrl = firstAnim.AnimationController;
-
-                    string[] testNames = new string[] { "Front_45", "FrontLeft_45", "Left_45", "BackLeft_45", "Back_45", "BackRight_45", "Right_45", "FrontRight_45", "FrontRight_0" };
-                    float[][] dirCfg = new float[][] {
-                        new float[] { 0, 45 }, new float[] { 45, 45 }, new float[] { 90, 45 }, new float[] { 135, 45 },
-                        new float[] { 180, 45 }, new float[] { 225, 45 }, new float[] { 270, 45 }, new float[] { 315, 45 },
-                        new float[] { 315, 0 }
-                    };
-
-                    for (int t = 0; t < 9; t++)
-                    {
-                        Runtime.previewScale = 0.01f;
-                        viewport.GL_Control.ResetCamera(true);
-                        viewport.GL_Control.CameraTarget = new OpenTK.Vector3(
-                            viewport.GL_Control.CameraTarget.X,
-                            viewport.GL_Control.CameraTarget.Y + camOffsetY,
-                            viewport.GL_Control.CameraTarget.Z
-                        );
-
-                        if (animCtrl != null) { animCtrl.Reset(); animCtrl.SetFrame(0); animCtrl.NextFrame(); }
-
-                        // Y rotation for horizontal, X rotation for tilt
-                        RotateModelAxis(viewport, dirCfg[t][0], 'Y');
-                        if (dirCfg[t][1] > 0)
-                            RotateModelAxis(viewport, dirCfg[t][1], 'X');
-
-                        for (int i = 0; i < 10; i++) { viewport.GL_Control.Refresh(); Application.DoEvents(); Thread.Sleep(50); }
-                        using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
-                            bmp.Save(Path.Combine(testDir, testNames[t] + ".png"), ImageFormat.Png);
-                        Console.WriteLine("[Test] " + testNames[t]);
-                    }
-                    Console.WriteLine("[Test] Done! Check " + testDir);
-                    Environment.Exit(0);
+                        Console.WriteLine(anim.Text);
+                    return;
                 }
 
                 List<int> directions = new List<int>();
@@ -337,6 +299,11 @@ namespace AnimationRecorder
                 {
                     GFBANM animNode = animNodes[animIdx];
                     string animName = SanitizeFileName(animNode.Text ?? ("anim_" + animIdx));
+
+                    // --anim filter: only record matching animations
+                    if (!string.IsNullOrEmpty(animFilter) && !animName.Contains(animFilter))
+                        continue;
+
                     Console.WriteLine("[Recorder] === Animation " + (animIdx + 1) + "/" + animNodes.Count + ": " + animName + " ===");
 
                     STAnimation animController = animNode.AnimationController;
@@ -413,7 +380,8 @@ namespace AnimationRecorder
                         animController.NextFrame();
                         PumpEvents(200);
 
-                        for (int frame = 0; frame < totalFrames; frame++)
+                        // Skip frame 0 (often incorrect)
+                        for (int frame = 1; frame < totalFrames; frame++)
                         {
                             animController.SetFrame(frame);
                             animController.NextFrame();
@@ -425,10 +393,9 @@ namespace AnimationRecorder
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
 
-                            // Use actual GL control size for screenshot (matches rendered area)
+                            // Capture and save as JPG (high quality)
                             using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
                             {
-                                // Crop/resize to desired output size if needed
                                 if (actualWidth != width || actualHeight != height)
                                 {
                                     Bitmap resized = new Bitmap(width, height);
@@ -437,14 +404,14 @@ namespace AnimationRecorder
                                         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                                         g.DrawImage(bmp, 0, 0, width, height);
                                     }
-                                    string framePath = Path.Combine(animDir, frame.ToString("D6") + ".png");
-                                    resized.Save(framePath, ImageFormat.Png);
+                                    string framePath = Path.Combine(animDir, frame.ToString("D6") + ".jpg");
+                                    resized.Save(framePath, ImageFormat.Jpeg);
                                     resized.Dispose();
                                 }
                                 else
                                 {
-                                    string framePath = Path.Combine(animDir, frame.ToString("D6") + ".png");
-                                    bmp.Save(framePath, ImageFormat.Png);
+                                    string framePath = Path.Combine(animDir, frame.ToString("D6") + ".jpg");
+                                    bmp.Save(framePath, ImageFormat.Jpeg);
                                 }
                             }
 
@@ -668,7 +635,7 @@ namespace AnimationRecorder
         static void EncodeToMp4(string ffmpeg, string framesDir, string outputPath, int fps)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-            string pattern = Path.Combine(framesDir, "%06d.png");
+            string pattern = Path.Combine(framesDir, "%06d.jpg");
 
             Console.WriteLine("[Recorder] Encoding " + Path.GetFileName(outputPath) + "...");
 
@@ -779,6 +746,7 @@ namespace AnimationRecorder
             Console.WriteLine("  --fps <rate>          Video FPS (default: 30)");
             Console.WriteLine("  --direction <name>    Front, FrontLeft, Left, BackLeft, Back, BackRight, Right, FrontRight");
             Console.WriteLine("  --all-directions      Record all 8 directions");
+            Console.WriteLine("  --anim <name>         Only record animations matching this name (partial match)");
             Console.WriteLine("  --ffmpeg <path>       Path to ffmpeg.exe");
             Console.WriteLine();
             Console.WriteLine("Camera:");
