@@ -270,22 +270,52 @@ namespace AnimationRecorder
                     Thread.Sleep(50);
                 }
 
-                // Quick test mode: capture rotation test images
+                // Quick test mode: 9 direction screenshots + animation list
                 if (parsedArgs.ContainsKey("--test8"))
                 {
-                    Console.WriteLine("[Recorder] TEST MODE: Front and Left...");
+                    // Output animation names
+                    foreach (var anim in animNodes)
+                        Console.WriteLine("ANIM:" + anim.Text);
+
+                    Console.WriteLine("[Recorder] TEST MODE: 9 directions...");
                     string testDir = Path.Combine(outputDir, "_test");
                     Directory.CreateDirectory(testDir);
 
-                    // Apply first animation frame 0
                     GFBANM firstAnim = animNodes[0];
                     STAnimation animCtrl = firstAnim.AnimationController;
-                    if (animCtrl != null)
+
+                    string[] testNames = new string[] { "Front_45", "FrontLeft_45", "Left_45", "BackLeft_45", "Back_45", "BackRight_45", "Right_45", "FrontRight_45", "FrontRight_0" };
+                    float[][] dirCfg = new float[][] {
+                        new float[] { 0, 45 }, new float[] { 45, 45 }, new float[] { 90, 45 }, new float[] { 135, 45 },
+                        new float[] { 180, 45 }, new float[] { 225, 45 }, new float[] { 270, 45 }, new float[] { 315, 45 },
+                        new float[] { 315, 0 }
+                    };
+
+                    for (int t = 0; t < 9; t++)
                     {
-                        animCtrl.Reset();
-                        animCtrl.SetFrame(0);
-                        animCtrl.NextFrame();
+                        Runtime.previewScale = 0.01f;
+                        viewport.GL_Control.ResetCamera(true);
+                        viewport.GL_Control.CameraTarget = new OpenTK.Vector3(
+                            viewport.GL_Control.CameraTarget.X,
+                            viewport.GL_Control.CameraTarget.Y + camOffsetY,
+                            viewport.GL_Control.CameraTarget.Z
+                        );
+
+                        if (animCtrl != null) { animCtrl.Reset(); animCtrl.SetFrame(0); animCtrl.NextFrame(); }
+
+                        // Y rotation for horizontal, X rotation for tilt
+                        RotateModelAxis(viewport, dirCfg[t][0], 'Y');
+                        if (dirCfg[t][1] > 0)
+                            RotateModelAxis(viewport, dirCfg[t][1], 'X');
+
+                        for (int i = 0; i < 10; i++) { viewport.GL_Control.Refresh(); Application.DoEvents(); Thread.Sleep(50); }
+                        using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
+                            bmp.Save(Path.Combine(testDir, testNames[t] + ".png"), ImageFormat.Png);
+                        Console.WriteLine("[Test] " + testNames[t]);
                     }
+                    Console.WriteLine("[Test] Done! Check " + testDir);
+                    Environment.Exit(0);
+                }
 
                     // Front (0 degrees)
                     RotateModelRootBone(viewport, 0);
@@ -339,7 +369,25 @@ namespace AnimationRecorder
 
                     int totalFrames = (int)animController.FrameCount;
                     if (totalFrames <= 0) totalFrames = 1;
-                    Console.WriteLine("[Recorder] Frames: " + totalFrames);
+
+                    // Try to read actual FPS from animation data
+                    int animFps = fps; // default from CLI
+                    try
+                    {
+                        var animConfigField = animNode.GetType().GetField("AnimationData", BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (animConfigField != null)
+                        {
+                            var animData = animConfigField.GetValue(animNode);
+                            // AnimationData doesn't store FPS directly, read from FlatBuffer
+                        }
+                        // Try reading FPS from the FlatBuffer config
+                        var loadMethod = animNode.GetType().GetMethod("Load", BindingFlags.Public | BindingFlags.Instance);
+                        // FPS is in the FlatBuffer Config struct, but not exposed on GFBANM
+                        // Use default FPS for now
+                    }
+                    catch { }
+
+                    Console.WriteLine("[Recorder] Frames: " + totalFrames + ", FPS: " + animFps);
 
                     foreach (int dirIdx in directions)
                     {
