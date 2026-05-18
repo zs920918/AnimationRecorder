@@ -1,6 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
-REM Setup script - downloads dependencies and builds AnimationRecorder
+REM AnimationRecorder Setup Script
+REM Downloads Switch Toolbox from GitHub and builds the recorder
 
 echo ============================================
 echo   AnimationRecorder Setup
@@ -17,114 +18,109 @@ echo.
 if exist "%LIB_DIR%\Toolbox.exe" (
     if exist "%LIB_DIR%\Toolbox.Library.dll" (
         echo Toolbox already configured.
-        goto :check_ffmpeg
+        goto :fix_dlls
     )
 )
 
-echo Do you already have Switch Toolbox installed?
-echo   1. Yes - specify the path to the Release folder
-echo   2. No  - download from GitHub (35MB)
+echo How to get Switch Toolbox:
+echo   1. I have it - specify the path
+echo   2. Download from GitHub (35MB)
 echo.
 set /p TOOLBOX_CHOICE="Enter 1 or 2: "
 
 if "!TOOLBOX_CHOICE!"=="1" (
     echo.
-    echo Enter the path to the folder containing Toolbox.exe
-    echo (usually the Release folder or the extracted zip folder)
-    echo.
+    echo Enter path to the folder containing Toolbox.exe
     set /p TOOLBOX_PATH="Path: "
-    
     if not exist "!TOOLBOX_PATH!\Toolbox.exe" (
-        echo ERROR: Toolbox.exe not found at "!TOOLBOX_PATH!"
+        echo ERROR: Toolbox.exe not found
         pause
         exit /b 1
     )
-    
-    echo Copying files...
+    echo Copying...
     mkdir "%LIB_DIR%" 2>nul
     xcopy "!TOOLBOX_PATH!\*" "%LIB_DIR%\" /E /I /Y >nul
-    echo Done!
-    goto :check_ffmpeg
+    goto :fix_dlls
 )
 
-REM Download from GitHub
+REM Download
 echo.
-echo Downloading Switch Toolbox from GitHub...
-set ZIP_PATH=%PROJ_DIR%toolbox.zip
-set URL=https://github.com/KillzXGaming/Switch-Toolbox/releases/download/Final/Toolbox-Latest.zip
-
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%URL%' -OutFile '%ZIP_PATH%'"
-if not exist "%ZIP_PATH%" (
-    echo ERROR: Download failed.
-    echo Please download manually from: https://github.com/KillzXGaming/Switch-Toolbox/releases
-    echo Extract the zip to: %LIB_DIR%\
+echo Downloading from GitHub...
+set ZIP=%PROJ_DIR%toolbox.zip
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; Invoke-WebRequest -Uri 'https://github.com/KillzXGaming/Switch-Toolbox/releases/download/Final/Toolbox-Latest.zip' -OutFile '%ZIP%'"
+if not exist "%ZIP%" (
+    echo Download failed. Download manually from:
+    echo https://github.com/KillzXGaming/Switch-Toolbox/releases
+    echo Extract to: %LIB_DIR%\
     pause
     exit /b 1
 )
-
 echo Extracting...
-powershell -Command "Expand-Archive -Path '%ZIP_PATH%' -DestinationPath '%LIB_DIR%' -Force"
-del "%ZIP_PATH%"
+mkdir "%LIB_DIR%" 2>nul
+powershell -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%LIB_DIR%' -Force"
+del "%ZIP%"
 
-REM The zip extracts to a subfolder. Move contents up if needed.
+REM Handle nested folder from zip
 for /d %%d in ("%LIB_DIR%\*") do (
     if exist "%%d\Toolbox.exe" (
-        echo Moving files from %%d to %LIB_DIR%...
         xcopy "%%d\*" "%LIB_DIR%\" /E /I /Y >nul
         rmdir /s /q "%%d"
     )
 )
 
-echo Toolbox installed!
+:fix_dlls
+echo.
+echo [1.5/3] Fixing DLL conflicts...
+
+REM CRITICAL: Remove duplicate/stub FirstPlugin.Plg.dll files
+REM The correct one is in Lib\Plugins\, wrong ones in root and Lib\
+if exist "%LIB_DIR%\FirstPlugin.Plg.dll" (
+    del "%LIB_DIR%\FirstPlugin.Plg.dll"
+    echo Removed wrong FirstPlugin.Plg.dll from root
+)
+if exist "%LIB_DIR%\FirstPlugin.Plg.pdb" (
+    del "%LIB_DIR%\FirstPlugin.Plg.pdb"
+)
+if exist "%LIB_DIR%\Lib\FirstPlugin.Plg.dll" (
+    del "%LIB_DIR%\Lib\FirstPlugin.Plg.dll"
+    echo Removed stub FirstPlugin.Plg.dll from Lib\
+)
+
+REM Verify correct DLL exists
+if not exist "%LIB_DIR%\Lib\Plugins\FirstPlugin.Plg.dll" (
+    echo ERROR: Correct FirstPlugin.Plg.dll not found in Lib\Plugins\
+    echo Toolbox installation may be incomplete.
+    pause
+    exit /b 1
+)
+echo DLL fix complete.
 
 :check_ffmpeg
 echo.
 echo [2/3] Checking FFmpeg...
 
-set BIN_DIR=%PROJ_DIR%bin
-set FFMPEG_PATH=
-
-REM Check common locations
-if exist "%BIN_DIR%\ffmpeg.exe" set FFMPEG_PATH=%BIN_DIR%\ffmpeg.exe
-if exist "%LIB_DIR%\ffmpeg.exe" set FFMPEG_PATH=%LIB_DIR%\ffmpeg.exe
-
-if defined FFMPEG_PATH (
-    echo FFmpeg found at %FFMPEG_PATH%
+if exist "%PROJ_DIR%bin\ffmpeg.exe" (
+    echo FFmpeg found.
     goto :build
 )
 
-echo FFmpeg not found. You can:
-echo   1. Specify path to existing ffmpeg.exe
-echo   2. Skip (MP4 encoding will not be available)
-echo.
-set /p FFMPEG_CHOICE="Enter 1 or 2: "
-
-if "!FFMPEG_CHOICE!"=="1" (
-    echo.
-    set /p FFMPEG_INPUT="Path to ffmpeg.exe: "
-    if exist "!FFMPEG_INPUT!" (
-        mkdir "%BIN_DIR%" 2>nul
-        copy "!FFMPEG_INPUT!" "%BIN_DIR%\ffmpeg.exe" >nul
-        echo Copied to %BIN_DIR%\ffmpeg.exe
-    ) else (
-        echo File not found. Skipping.
-    )
-)
+echo FFmpeg not found. MP4 encoding will not be available.
+echo Download ffmpeg.exe and place it in: %PROJ_DIR%bin\
 
 :build
 echo.
 echo [3/3] Building AnimationRecorder...
 call "%PROJ_DIR%build.bat"
-echo.
 
+echo.
 echo ============================================
 echo   Setup complete!
 echo ============================================
 echo.
 echo Usage:
-echo   lib\AnimationRecorder.exe --gfpak "path\to\file.gfpak" --output "D:\output" --all-directions
+echo   lib\AnimationRecorder.exe --gfpak "file.gfpak" --output "D:\output" --all-directions
 echo.
 echo Python batch:
-echo   python record_animations.py --input-dir "D:\pokemon\gfpak_files" --output-dir "D:\output"
+echo   python record_animations.py --input-dir "D:\gfpak_files" --output-dir "D:\output"
 echo.
 pause
