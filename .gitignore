@@ -1,0 +1,17 @@
+# Build output
+bin/
+
+# Downloaded dependencies
+lib/
+ffmpeg.exe
+
+# Test output
+_test/
+recordings/
+
+# System
+Thumbs.db
+Desktop.ini
+*.zip
+*.tmp
+__pycache__/
