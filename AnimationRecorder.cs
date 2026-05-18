@@ -380,8 +380,8 @@ namespace AnimationRecorder
                         animController.NextFrame();
                         PumpEvents(200);
 
-                        // Skip frame 0 (often incorrect)
-                        for (int frame = 1; frame < totalFrames; frame++)
+                        // Render all frames including frame 0
+                        for (int frame = 0; frame < totalFrames; frame++)
                         {
                             animController.SetFrame(frame);
                             animController.NextFrame();
@@ -417,6 +417,20 @@ namespace AnimationRecorder
 
                             if (frame % 10 == 0 || frame == totalFrames - 1)
                                 Console.WriteLine("[Recorder]   Frame " + (frame + 1) + "/" + totalFrames);
+                        }
+
+                        // Delete first frame (frame 000000) - often incorrect
+                        string firstFrame = Path.Combine(animDir, "000000.jpg");
+                        if (File.Exists(firstFrame))
+                            File.Delete(firstFrame);
+
+                        // Renumber remaining frames to start from 000000
+                        var remainingFrames = Directory.GetFiles(animDir, "*.jpg").OrderBy(f => f).ToArray();
+                        for (int i = 0; i < remainingFrames.Length; i++)
+                        {
+                            string newName = Path.Combine(animDir, i.ToString("D6") + ".jpg");
+                            if (remainingFrames[i] != newName)
+                                File.Move(remainingFrames[i], newName);
                         }
 
                         if (!string.IsNullOrEmpty(ffmpeg))
