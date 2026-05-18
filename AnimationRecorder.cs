@@ -227,14 +227,9 @@ namespace AnimationRecorder
             Runtime.renderBones = false;
             Runtime.displayAxisLines = false;
 
-            // Set background to white (try different field names for compatibility)
-            try
-            {
-                var bgField = typeof(Runtime).GetField("BackgroundColor", BindingFlags.Public | BindingFlags.Static);
-                if (bgField != null)
-                    bgField.SetValue(null, System.Drawing.Color.FromArgb(255, 255, 255));
-            }
-            catch { }
+            // Set background to white
+            Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
+            Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
 
                 // Scale model to fit in frame
                 Runtime.previewScale = 0.01f;
@@ -376,7 +371,7 @@ namespace AnimationRecorder
                         // Rotate the MODEL for each direction
                         // Y axis = horizontal rotation, X axis = 45° downward tilt
                         RotateModelAxis(viewport, dirIdx * 45f, 'Y');
-                        RotateModelAxis(viewport, -45f, 'X');  // negative = 俯角 (looking down)
+                        RotateModelAxis(viewport, 45f, 'X');  // 俯角 (looking down)
 
                         // Warm up
                         for (int i = 0; i < 5; i++)
@@ -398,7 +393,7 @@ namespace AnimationRecorder
 
                             // Rotate model after animation update
                             RotateModelAxis(viewport, dirIdx * 45f, 'Y');
-                            RotateModelAxis(viewport, -45f, 'X');
+                            RotateModelAxis(viewport, 45f, 'X');
 
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
