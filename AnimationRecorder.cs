@@ -638,22 +638,33 @@ namespace AnimationRecorder
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
             string pattern = Path.Combine(framesDir, "%06d.png");
 
+            Console.WriteLine("[Recorder] Encoding " + Path.GetFileName(outputPath) + "...");
+
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = ffmpeg;
-            psi.Arguments = "-framerate " + fps + " -i \"" + pattern + "\" -c:v libx264 -pix_fmt yuv420p -y \"" + outputPath + "\"";
+            psi.Arguments = "-framerate " + fps + " -i \"" + pattern + "\" -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p -y \"" + outputPath + "\"";
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
 
-            using (Process process = Process.Start(psi))
+            try
             {
-                process.WaitForExit();
-                if (process.ExitCode != 0)
+                using (Process process = Process.Start(psi))
                 {
-                    string error = process.StandardError.ReadToEnd();
-                    Console.Error.WriteLine("[ERROR] FFmpeg: " + error.Substring(0, Math.Min(500, error.Length)));
+                    bool exited = process.WaitForExit(60000); // 60 second timeout
+                    if (!exited)
+                    {
+                        process.Kill();
+                        Console.Error.WriteLine("[ERROR] FFmpeg timed out for " + outputPath);
+                    }
+                    else if (process.ExitCode != 0)
+                    {
+                        Console.Error.WriteLine("[ERROR] FFmpeg failed with code " + process.ExitCode);
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[ERROR] FFmpeg: " + ex.Message);
             }
         }
 
