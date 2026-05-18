@@ -222,10 +222,13 @@ namespace AnimationRecorder
 
                 Console.WriteLine("[Recorder] Setting up camera...");
 
-                // Disable grid, bone visualization, and axis lines
-                Runtime.displayGrid = false;
-                Runtime.renderBones = false;
-                Runtime.displayAxisLines = false;
+            // Disable grid, bone visualization, and axis lines
+            Runtime.displayGrid = false;
+            Runtime.renderBones = false;
+            Runtime.displayAxisLines = false;
+
+            // Set background to white
+            Runtime.BackgroundColor = System.Drawing.Color.FromArgb(255, 255, 255);
 
                 // Scale model to fit in frame
                 Runtime.previewScale = 0.01f;
@@ -364,8 +367,10 @@ namespace AnimationRecorder
                         if (camDistance != 1.0f)
                             viewport.GL_Control.Fov = viewport.GL_Control.Fov / camDistance;
 
-                        // Rotate the MODEL around Z axis for each direction
-                        RotateModelRootBone(viewport, dirIdx * 45f);
+                        // Rotate the MODEL for each direction
+                        // Y axis = horizontal rotation, X axis = 45° downward tilt
+                        RotateModelAxis(viewport, dirIdx * 45f, 'Y');
+                        RotateModelAxis(viewport, -45f, 'X');  // negative = 俯角 (looking down)
 
                         // Warm up
                         for (int i = 0; i < 5; i++)
@@ -385,8 +390,9 @@ namespace AnimationRecorder
                             animController.SetFrame(frame);
                             animController.NextFrame();
 
-                            // Rotate model: add Z rotation to root bone after animation
-                            RotateModelRootBone(viewport, dirIdx * 45f);
+                            // Rotate model after animation update
+                            RotateModelAxis(viewport, dirIdx * 45f, 'Y');
+                            RotateModelAxis(viewport, -45f, 'X');
 
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
