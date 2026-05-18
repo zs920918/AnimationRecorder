@@ -227,8 +227,14 @@ namespace AnimationRecorder
             Runtime.renderBones = false;
             Runtime.displayAxisLines = false;
 
-            // Set background to white
-            Runtime.BackgroundColor = System.Drawing.Color.FromArgb(255, 255, 255);
+            // Set background to white (try different field names for compatibility)
+            try
+            {
+                var bgField = typeof(Runtime).GetField("BackgroundColor", BindingFlags.Public | BindingFlags.Static);
+                if (bgField != null)
+                    bgField.SetValue(null, System.Drawing.Color.FromArgb(255, 255, 255));
+            }
+            catch { }
 
                 // Scale model to fit in frame
                 Runtime.previewScale = 0.01f;
