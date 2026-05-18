@@ -55,6 +55,9 @@ namespace AnimationRecorder
             bool allDirections = parsedArgs.ContainsKey("--all-directions");
             string directionStr = parsedArgs.ContainsKey("--direction") ? parsedArgs["--direction"] : "Front";
             string ffmpegPath = parsedArgs.ContainsKey("--ffmpeg") ? parsedArgs["--ffmpeg"] : "";
+            float camOffsetY = parsedArgs.ContainsKey("--cam-offset-y") ? float.Parse(parsedArgs["--cam-offset-y"]) : 2.0f;
+            float camFov = parsedArgs.ContainsKey("--cam-fov") ? float.Parse(parsedArgs["--cam-fov"]) : 0f;
+            float camDistance = parsedArgs.ContainsKey("--cam-distance") ? float.Parse(parsedArgs["--cam-distance"]) : 1.0f;
 
             if (!File.Exists(gfpakPath))
             {
@@ -68,7 +71,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camFov, camDistance, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -78,7 +81,8 @@ namespace AnimationRecorder
         }
 
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
-                                  bool allDirections, string directionStr, string ffmpegPath, Dictionary<string, string> parsedArgs)
+                                  bool allDirections, string directionStr, string ffmpegPath,
+                                  float camOffsetY, float camFov, float camDistance, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -344,11 +348,21 @@ namespace AnimationRecorder
                         // Reset camera to front view
                         Runtime.previewScale = 0.01f;
                         viewport.GL_Control.ResetCamera(true);
+
+                        // Apply camera offset
                         viewport.GL_Control.CameraTarget = new OpenTK.Vector3(
                             viewport.GL_Control.CameraTarget.X,
-                            viewport.GL_Control.CameraTarget.Y + 2.0f,
+                            viewport.GL_Control.CameraTarget.Y + camOffsetY,
                             viewport.GL_Control.CameraTarget.Z
                         );
+
+                        // Apply FOV override if specified
+                        if (camFov > 0)
+                            viewport.GL_Control.Fov = camFov;
+
+                        // Apply distance multiplier (smaller FOV = further away)
+                        if (camDistance != 1.0f)
+                            viewport.GL_Control.Fov = viewport.GL_Control.Fov / camDistance;
 
                         // Rotate the MODEL around Z axis for each direction
                         RotateModelRootBone(viewport, dirIdx * 45f);
@@ -723,6 +737,14 @@ namespace AnimationRecorder
             Console.WriteLine("  --direction <name>    Front, FrontLeft, Left, BackLeft, Back, BackRight, Right, FrontRight");
             Console.WriteLine("  --all-directions      Record all 8 directions");
             Console.WriteLine("  --ffmpeg <path>       Path to ffmpeg.exe");
+            Console.WriteLine();
+            Console.WriteLine("Camera:");
+            Console.WriteLine("  --cam-offset-y <n>    Camera target Y offset (default: 2.0, higher = model lower)");
+            Console.WriteLine("  --cam-fov <n>         Field of view override (default: auto, smaller = zoom out)");
+            Console.WriteLine("  --cam-distance <n>    Distance multiplier (default: 1.0, larger = further away)");
+            Console.WriteLine();
+            Console.WriteLine("Debug:");
+            Console.WriteLine("  --test8               Test mode: 9 direction screenshots, 1 frame each");
         }
 
         static string FindReleaseDir(string startDir)
