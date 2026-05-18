@@ -317,27 +317,6 @@ namespace AnimationRecorder
                     Environment.Exit(0);
                 }
 
-                    // Front (0 degrees)
-                    RotateModelRootBone(viewport, 0);
-                    for (int i = 0; i < 10; i++) { viewport.GL_Control.Refresh(); Application.DoEvents(); Thread.Sleep(50); }
-                    using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
-                        bmp.Save(Path.Combine(testDir, "Front.png"), ImageFormat.Png);
-                    Console.WriteLine("[Test] Front saved");
-
-                    // Reset and do Left (90 degrees)
-                    animCtrl.Reset();
-                    animCtrl.SetFrame(0);
-                    animCtrl.NextFrame();
-                    RotateModelRootBone(viewport, 90);
-                    for (int i = 0; i < 10; i++) { viewport.GL_Control.Refresh(); Application.DoEvents(); Thread.Sleep(50); }
-                    using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
-                        bmp.Save(Path.Combine(testDir, "Left.png"), ImageFormat.Png);
-                    Console.WriteLine("[Test] Left saved");
-
-                    Console.WriteLine("[Test] Done! Check " + testDir);
-                    return;
-                }
-
                 List<int> directions = new List<int>();
                 if (allDirections)
                 {
@@ -481,8 +460,6 @@ namespace AnimationRecorder
                         }
                     }
                 }
-
-                Console.WriteLine("[Recorder] === All done ===");
             }
             finally
             {
