@@ -144,7 +144,7 @@ namespace AnimationRecorder
                         modelNode = (GFBMDL)node;
                         Console.WriteLine("[Recorder] Model (GFBMDL): " + text);
                     }
-                    else if (node is GFBANM)
+                    else if (node is GFBANM && text.EndsWith(".gfbanm"))
                     {
                         animNodes.Add((GFBANM)node);
                     }
