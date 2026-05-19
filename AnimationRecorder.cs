@@ -224,10 +224,11 @@ namespace AnimationRecorder
 
                 Console.WriteLine("[Recorder] Setting up camera...");
 
-            // Disable grid, bone visualization, and axis lines
+            // Disable grid, bone visualization, axis lines, and orientation cube
             Runtime.displayGrid = false;
             Runtime.renderBones = false;
             Runtime.displayAxisLines = false;
+            viewport.GL_Control.ShowOrientationCube = false;
 
             // Set background to white
             Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
