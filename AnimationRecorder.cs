@@ -55,7 +55,8 @@ namespace AnimationRecorder
             bool allDirections = parsedArgs.ContainsKey("--all-directions");
             string directionStr = parsedArgs.ContainsKey("--direction") ? parsedArgs["--direction"] : "Front";
             string ffmpegPath = parsedArgs.ContainsKey("--ffmpeg") ? parsedArgs["--ffmpeg"] : "";
-            float camOffsetY = parsedArgs.ContainsKey("--cam-offset-y") ? float.Parse(parsedArgs["--cam-offset-y"]) : 2.0f;
+            float camOffsetY = parsedArgs.ContainsKey("--cam-offset-y") ? float.Parse(parsedArgs["--cam-offset-y"]) : 1.0f;
+            float camOffsetX = parsedArgs.ContainsKey("--cam-offset-x") ? float.Parse(parsedArgs["--cam-offset-x"]) : 0f;
             float camFov = parsedArgs.ContainsKey("--cam-fov") ? float.Parse(parsedArgs["--cam-fov"]) : 0f;
             float camDistance = parsedArgs.ContainsKey("--cam-distance") ? float.Parse(parsedArgs["--cam-distance"]) : 1.0f;
             string animFilter = parsedArgs.ContainsKey("--anim") ? parsedArgs["--anim"] : "";
@@ -72,7 +73,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camFov, camDistance, animFilter, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -83,7 +84,7 @@ namespace AnimationRecorder
 
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
-                                  float camOffsetY, float camFov, float camDistance, string animFilter, Dictionary<string, string> parsedArgs)
+                                  float camOffsetY, float camOffsetX, float camFov, float camDistance, string animFilter, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -349,7 +350,7 @@ namespace AnimationRecorder
 
                         // Apply camera offset
                         viewport.GL_Control.CameraTarget = new OpenTK.Vector3(
-                            viewport.GL_Control.CameraTarget.X,
+                            viewport.GL_Control.CameraTarget.X + camOffsetX,
                             viewport.GL_Control.CameraTarget.Y + camOffsetY,
                             viewport.GL_Control.CameraTarget.Z
                         );
@@ -764,7 +765,8 @@ namespace AnimationRecorder
             Console.WriteLine("  --ffmpeg <path>       Path to ffmpeg.exe");
             Console.WriteLine();
             Console.WriteLine("Camera:");
-            Console.WriteLine("  --cam-offset-y <n>    Camera target Y offset (default: 2.0, higher = model lower)");
+            Console.WriteLine("  --cam-offset-y <n>    Camera target Y offset (default: 1.0, higher = model lower)");
+            Console.WriteLine("  --cam-offset-x <n>    Camera target X offset (default: 0, positive = model moves right)");
             Console.WriteLine("  --cam-fov <n>         Field of view override (default: auto, smaller = zoom out)");
             Console.WriteLine("  --cam-distance <n>    Distance multiplier (default: 1.0, larger = further away)");
             Console.WriteLine();
