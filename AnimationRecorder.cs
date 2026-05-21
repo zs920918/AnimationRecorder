@@ -60,6 +60,8 @@ namespace AnimationRecorder
             float camFov = parsedArgs.ContainsKey("--cam-fov") ? float.Parse(parsedArgs["--cam-fov"]) : 0f;
             float camDistance = parsedArgs.ContainsKey("--cam-distance") ? float.Parse(parsedArgs["--cam-distance"]) : 1.0f;
             string animFilter = parsedArgs.ContainsKey("--anim") ? parsedArgs["--anim"] : "";
+            float brightness = parsedArgs.ContainsKey("--brightness") ? float.Parse(parsedArgs["--brightness"]) : 1.0f;
+            bool trackModel = parsedArgs.ContainsKey("--track");
 
             if (!File.Exists(gfpakPath))
             {
@@ -73,7 +75,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -84,7 +86,8 @@ namespace AnimationRecorder
 
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
-                                  float camOffsetY, float camOffsetX, float camFov, float camDistance, string animFilter, Dictionary<string, string> parsedArgs)
+                                  float camOffsetY, float camOffsetX, float camFov, float camDistance,
+                                  string animFilter, float brightness, bool trackModel, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -222,12 +225,10 @@ namespace AnimationRecorder
                 Application.DoEvents();
                 PumpEvents(500);
 
-                Console.WriteLine("[Recorder] Setting up camera...");
-
-            // Disable grid, bone visualization, axis lines, and orientation cube
-            Runtime.displayGrid = false;
-            Runtime.renderBones = false;
-            Runtime.displayAxisLines = false;
+                // Disable grid, bone visualization, axis lines, and orientation cube
+                Runtime.displayGrid = false;
+                Runtime.renderBones = false;
+                Runtime.displayAxisLines = false;
             viewport.GL_Control.ShowOrientationCube = false;
 
             // Set background to white
@@ -392,19 +393,76 @@ namespace AnimationRecorder
                             RotateModelAxis(viewport, dirIdx * 45f, 'Y');
                             RotateModelAxis(viewport, 45f, 'X');
 
+                            // Track model BEFORE render: counteract X movement via ModelTransform
+                            if (trackModel)
+                            {
+                                try
+                                {
+                                    var editor = LibraryGUI.GetObjectEditor();
+                                    if (editor != null)
+                                    {
+                                        foreach (var dc in editor.DrawableContainers)
+                                        {
+                                            foreach (var d in dc.Drawables)
+                                            {
+                                                if (d.GetType().Name == "GFBMDL_Render")
+                                                {
+                                                    var field = d.GetType().GetField("ModelTransform");
+                                                    if (field != null)
+                                                    {
+                                                        float moveX = 0;
+                                                        foreach (var dc2 in editor.DrawableContainers)
+                                                        {
+                                                            foreach (var d2 in dc2.Drawables)
+                                                            {
+                                                                if (d2 is Toolbox.Library.STSkeleton)
+                                                                {
+                                                                    foreach (var bone in ((Toolbox.Library.STSkeleton)d2).bones)
+                                                                    {
+                                                                        if (bone.Text == "Waist")
+                                                                        {
+                                                                            moveX = bone.Transform.M41;
+                                                                            goto foundWaist;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        foundWaist:
+                                                        float scale = Runtime.previewScale;
+                                                        field.SetValue(d, OpenTK.Matrix4.CreateTranslation(-moveX * scale, 0, 0));
+                                                    }
+                                                    goto doneTrack;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+                                doneTrack:;
+                            }
+
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
 
-                            // Capture and save as JPG (high quality)
-                            using (Bitmap bmp = viewport.CreateScreenshot(actualWidth, actualHeight, false))
+                            // Capture and save as JPG
+                            int captureW = viewport.GL_Control.Width;
+                            int captureH = viewport.GL_Control.Height;
+                            using (Bitmap bmp = viewport.CreateScreenshot(captureW, captureH, false))
                             {
-                                if (actualWidth != width || actualHeight != height)
+                                Bitmap toSave = bmp;
+
+                                if (Math.Abs(brightness - 1.0f) > 0.01f)
+                                    toSave = AdjustBrightness(bmp, brightness);
+
+                                // Resize to target output size
+                                if (toSave.Width != width || toSave.Height != height)
                                 {
                                     Bitmap resized = new Bitmap(width, height);
                                     using (Graphics g = Graphics.FromImage(resized))
                                     {
                                         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                                        g.DrawImage(bmp, 0, 0, width, height);
+                                        g.DrawImage(toSave, 0, 0, width, height);
                                     }
                                     string framePath = Path.Combine(animDir, frame.ToString("D6") + ".jpg");
                                     resized.Save(framePath, ImageFormat.Jpeg);
@@ -413,8 +471,10 @@ namespace AnimationRecorder
                                 else
                                 {
                                     string framePath = Path.Combine(animDir, frame.ToString("D6") + ".jpg");
-                                    bmp.Save(framePath, ImageFormat.Jpeg);
+                                    toSave.Save(framePath, ImageFormat.Jpeg);
                                 }
+
+                                if (toSave != bmp) toSave.Dispose();
                             }
 
                             if (frame % 10 == 0 || frame == totalFrames - 1)
@@ -443,6 +503,10 @@ namespace AnimationRecorder
                         }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[FATAL] " + ex.ToString());
             }
             finally
             {
@@ -560,6 +624,33 @@ namespace AnimationRecorder
             }
         }
 
+        static void TrackModel(Viewport viewport, float offsetX, float offsetY)
+        {
+            // Legacy - not used
+        }
+
+        static void TrackModelBones(Viewport viewport, float offsetX, float offsetY)
+        {
+            // Reset ModelTransform to identity (no translation)
+            var editor = LibraryGUI.GetObjectEditor();
+            if (editor == null) return;
+
+            foreach (var dc in editor.DrawableContainers)
+            {
+                foreach (var d in dc.Drawables)
+                {
+                    if (d.GetType().Name == "GFBMDL_Render")
+                    {
+                        var field = d.GetType().GetField("ModelTransform");
+                        if (field != null)
+                        {
+                            field.SetValue(d, OpenTK.Matrix4.Identity);
+                        }
+                    }
+                }
+            }
+        }
+
         static void FrameCamera(Viewport viewport)
         {
             var containers = viewport.GetActiveContainers();
@@ -628,9 +719,20 @@ namespace AnimationRecorder
             if (!string.IsNullOrEmpty(customPath) && File.Exists(customPath))
                 return customPath;
 
+            // Check next to the exe
+            string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            string exePath = Path.Combine(exeDir, "ffmpeg.exe");
+            if (File.Exists(exePath)) return exePath;
+
+            // Check in ReleaseDir (next to Toolbox.exe)
             string localPath = Path.Combine(ReleaseDir, "ffmpeg.exe");
             if (File.Exists(localPath)) return localPath;
 
+            // Check in bin/ subfolder
+            string binPath = Path.Combine(Path.GetDirectoryName(exeDir), "bin", "ffmpeg.exe");
+            if (File.Exists(binPath)) return binPath;
+
+            // Check PATH
             try
             {
                 ProcessStartInfo psi = new ProcessStartInfo("ffmpeg", "-version");
@@ -724,6 +826,81 @@ namespace AnimationRecorder
             return name;
         }
 
+        static Bitmap AdjustBrightness(Bitmap source, float factor)
+        {
+            if (Math.Abs(factor - 1.0f) < 0.01f) return source;
+
+            Bitmap result = new Bitmap(source.Width, source.Height);
+            using (Graphics g = Graphics.FromImage(result))
+            {
+                float[][] matrix = {
+                    new float[] { factor, 0, 0, 0, 0 },
+                    new float[] { 0, factor, 0, 0, 0 },
+                    new float[] { 0, 0, factor, 0, 0 },
+                    new float[] { 0, 0, 0, 1, 0 },
+                    new float[] { 0, 0, 0, 0, 1 }
+                };
+                var colorMatrix = new System.Drawing.Imaging.ColorMatrix(matrix);
+                var attributes = new System.Drawing.Imaging.ImageAttributes();
+                attributes.SetColorMatrix(colorMatrix);
+                g.DrawImage(source, new System.Drawing.Rectangle(0, 0, source.Width, source.Height),
+                    0, 0, source.Width, source.Height, System.Drawing.GraphicsUnit.Pixel, attributes);
+            }
+            return result;
+        }
+
+        static Bitmap CenterModelInImageFast(Bitmap source)
+        {
+            // Use byte array for fast pixel access
+            var data = source.LockBits(new System.Drawing.Rectangle(0, 0, source.Width, source.Height),
+                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+
+            byte[] pixels = new byte[data.Stride * data.Height];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
+            source.UnlockBits(data);
+
+            long sumX = 0, sumY = 0, count = 0;
+            int step = 8;
+
+            for (int y = 0; y < data.Height; y += step)
+            {
+                for (int x = 0; x < data.Width; x += step)
+                {
+                    int offset = y * data.Stride + x * 4;
+                    byte b = pixels[offset]; byte g = pixels[offset + 1]; byte r = pixels[offset + 2];
+                    if (r < 200 || g < 200 || b < 200)
+                    {
+                        sumX += x; sumY += y; count++;
+                    }
+                }
+            }
+
+            if (count < 10) return source;
+
+            float modelCenterX = (float)sumX / count;
+            float modelCenterY = (float)sumY / count;
+            float imageCenterX = source.Width / 2f;
+            float imageCenterY = source.Height / 2f;
+
+            int shiftX = (int)(imageCenterX - modelCenterX);
+            int shiftY = (int)(imageCenterY - modelCenterY);
+
+            if (Math.Abs(shiftX) < 5 && Math.Abs(shiftY) < 5) return source;
+
+            // Create new bitmap with model centered
+            Bitmap result = new Bitmap(source.Width, source.Height);
+            using (Graphics g = Graphics.FromImage(result))
+            {
+                g.Clear(System.Drawing.Color.White);
+                g.DrawImage(source, shiftX, shiftY);
+            }
+
+            // Dispose original to free memory
+            source.Dispose();
+
+            return result;
+        }
+
         static Dictionary<string, string> ParseArgs(string[] args)
         {
             Dictionary<string, string> result = new Dictionary<string, string>();
@@ -770,6 +947,8 @@ namespace AnimationRecorder
             Console.WriteLine("  --cam-offset-x <n>    Camera target X offset (default: 0, positive = model moves right)");
             Console.WriteLine("  --cam-fov <n>         Field of view override (default: auto, smaller = zoom out)");
             Console.WriteLine("  --cam-distance <n>    Distance multiplier (default: 1.0, larger = further away)");
+            Console.WriteLine("  --brightness <n>      Brightness multiplier (default: 1.0, 1.5=brighter, 0.5=darker)");
+            Console.WriteLine("  --track               Enable camera tracking (follow model root bone each frame)");
             Console.WriteLine();
             Console.WriteLine("Debug:");
             Console.WriteLine("  --test8               Test mode: 9 direction screenshots, 1 frame each");
