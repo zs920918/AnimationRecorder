@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -370,9 +370,9 @@ namespace AnimationRecorder
                             viewport.GL_Control.Fov = viewport.GL_Control.Fov / camDistance;
 
                         // Rotate the MODEL for each direction
-                        // Y axis = horizontal rotation, X axis = 45° downward tilt
+                        // Y axis = horizontal rotation, X axis = 45掳 downward tilt
                         RotateModelAxis(viewport, dirIdx * 45f, 'Y');
-                        RotateModelAxis(viewport, 45f, 'X');  // 俯角 (looking down)
+                        RotateModelAxis(viewport, 45f, 'X');  // 淇 (looking down)
 
                         // Warm up
                         for (int i = 0; i < 5; i++)
@@ -886,21 +886,20 @@ namespace AnimationRecorder
         {
             try
             {
-                // Set shading mode and black background
+                var origShading = Runtime.viewportShading;
                 Runtime.viewportShading = shading;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
-                // Force render with new settings
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
                 Thread.Sleep(20);
 
-                // Capture
                 int w = viewport.GL_Control.Width;
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
+                    // Replace white background with black
+                    ReplaceWhiteBackground(bmp);
+
                     using (Bitmap resized = new Bitmap(width, height))
                     {
                         using (Graphics g = Graphics.FromImage(resized))
@@ -913,17 +912,12 @@ namespace AnimationRecorder
                         resized.Save(Path.Combine(outDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
                     }
                 }
+
+                Runtime.viewportShading = origShading;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[WARN] " + subDir + " render: " + ex.Message);
-            }
-            finally
-            {
-                // ALWAYS restore default shading and white background
-                Runtime.viewportShading = Runtime.ViewportShading.Default;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
             }
         }
 
@@ -931,9 +925,8 @@ namespace AnimationRecorder
         {
             try
             {
+                var origShading = Runtime.viewportShading;
                 Runtime.viewportShading = Runtime.ViewportShading.Default;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
@@ -943,48 +936,56 @@ namespace AnimationRecorder
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
-                    Bitmap gray = ToGrayscale(bmp);
+                    // Replace white background with black
+                    ReplaceWhiteBackground(bmp);
 
-                    if (Math.Abs(brightness - 1.0f) > 0.01f)
-                    {
-                        var adjusted = AdjustBrightness(gray, brightness);
-                        gray.Dispose();
-                        gray = adjusted;
-                    }
+                    // Convert to white model: each pixel becomes white * its brightness
+                    Bitmap whiteModel = ToWhiteModel(bmp);
 
                     using (Bitmap resized = new Bitmap(width, height))
                     {
                         using (Graphics g = Graphics.FromImage(resized))
                         {
                             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                            g.DrawImage(gray, 0, 0, width, height);
+                            g.DrawImage(whiteModel, 0, 0, width, height);
                         }
                         string outDir = Path.Combine(animDir, "gray");
                         Directory.CreateDirectory(outDir);
                         resized.Save(Path.Combine(outDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
                     }
-                    gray.Dispose();
+                    whiteModel.Dispose();
                 }
+
+                Runtime.viewportShading = origShading;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[WARN] Gray render: " + ex.Message);
             }
-            finally
+        }
+
+        static Bitmap ToWhiteModel(Bitmap source)
+        {
+            Bitmap result = new Bitmap(source.Width, source.Height);
+            for (int y = 0; y < source.Height; y++)
             {
-                Runtime.viewportShading = Runtime.ViewportShading.Default;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
+                for (int x = 0; x < source.Width; x++)
+                {
+                    var pixel = source.GetPixel(x, y);
+                    float brightness = (pixel.R * 0.299f + pixel.G * 0.587f + pixel.B * 0.114f) / 255f;
+                    int val = Math.Min(255, Math.Max(0, (int)(brightness * 255)));
+                    result.SetPixel(x, y, System.Drawing.Color.FromArgb(val, val, val));
+                }
             }
+            return result;
         }
 
         static void RenderSilhouetteFrame(Viewport viewport, int width, int height, string animDir, int frame)
         {
             try
             {
+                var origShading = Runtime.viewportShading;
                 Runtime.viewportShading = Runtime.ViewportShading.Normal;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
@@ -994,6 +995,10 @@ namespace AnimationRecorder
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
+                    // Replace white background with black
+                    ReplaceWhiteBackground(bmp);
+
+                    // Convert to silhouette: any non-black pixel becomes white
                     Bitmap sil = new Bitmap(bmp.Width, bmp.Height);
                     for (int y = 0; y < bmp.Height; y++)
                     {
@@ -1020,16 +1025,27 @@ namespace AnimationRecorder
                     }
                     sil.Dispose();
                 }
+
+                Runtime.viewportShading = origShading;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[WARN] Silhouette render: " + ex.Message);
             }
-            finally
+        }
+
+        static void ReplaceWhiteBackground(Bitmap bmp)
+        {
+            for (int y = 0; y < bmp.Height; y++)
             {
-                Runtime.viewportShading = Runtime.ViewportShading.Default;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
+                for (int x = 0; x < bmp.Width; x++)
+                {
+                    var pixel = bmp.GetPixel(x, y);
+                    if (pixel.R > 240 && pixel.G > 240 && pixel.B > 240)
+                    {
+                        bmp.SetPixel(x, y, System.Drawing.Color.Black);
+                    }
+                }
             }
         }
 
