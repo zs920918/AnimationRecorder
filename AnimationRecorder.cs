@@ -65,6 +65,7 @@ namespace AnimationRecorder
             bool boneMode = parsedArgs.ContainsKey("--bone");
             bool normalMode = parsedArgs.ContainsKey("--normal");
             bool grayMode = parsedArgs.ContainsKey("--gray");
+            bool silhouetteMode = parsedArgs.ContainsKey("--silhouette");
 
             if (!File.Exists(gfpakPath))
             {
@@ -78,7 +79,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -90,7 +91,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -445,6 +446,9 @@ namespace AnimationRecorder
                                 doneTrack:;
                             }
 
+                            // Ensure default shading for regular capture
+                            Runtime.viewportShading = Runtime.ViewportShading.Default;
+
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
 
@@ -496,6 +500,12 @@ namespace AnimationRecorder
                             if (grayMode)
                             {
                                 RenderGrayFrame(viewport, width, height, animDir, frame, brightness);
+                            }
+
+                            // Silhouette mode: render black/white mask
+                            if (silhouetteMode)
+                            {
+                                RenderSilhouetteFrame(viewport, width, height, animDir, frame);
                             }
 
                             if (frame % 10 == 0 || frame == totalFrames - 1)
@@ -874,8 +884,14 @@ namespace AnimationRecorder
         {
             try
             {
-                var originalShading = Runtime.viewportShading;
+                var origShading = Runtime.viewportShading;
+                var origTop = Runtime.backgroundGradientTop;
+                var origBot = Runtime.backgroundGradientBottom;
+
+                // Black background + Normal shading
                 Runtime.viewportShading = Runtime.ViewportShading.Normal;
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
@@ -897,7 +913,10 @@ namespace AnimationRecorder
                     }
                 }
 
-                Runtime.viewportShading = originalShading;
+                // Restore
+                Runtime.viewportShading = origShading;
+                Runtime.backgroundGradientTop = origTop;
+                Runtime.backgroundGradientBottom = origBot;
             }
             catch (Exception ex)
             {
@@ -909,9 +928,14 @@ namespace AnimationRecorder
         {
             try
             {
-                // Use default shading (with lighting)
-                var originalShading = Runtime.viewportShading;
+                var origShading = Runtime.viewportShading;
+                var origTop = Runtime.backgroundGradientTop;
+                var origBot = Runtime.backgroundGradientBottom;
+
+                // Black background + Default shading
                 Runtime.viewportShading = Runtime.ViewportShading.Default;
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
@@ -920,10 +944,8 @@ namespace AnimationRecorder
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
-                    // Convert to grayscale
                     Bitmap gray = ToGrayscale(bmp);
 
-                    // Apply brightness
                     if (Math.Abs(brightness - 1.0f) > 0.01f)
                     {
                         var adjusted = AdjustBrightness(gray, brightness);
@@ -931,7 +953,6 @@ namespace AnimationRecorder
                         gray = adjusted;
                     }
 
-                    // Resize
                     using (Bitmap resized = new Bitmap(width, height))
                     {
                         using (Graphics g = Graphics.FromImage(resized))
@@ -946,7 +967,10 @@ namespace AnimationRecorder
                     gray.Dispose();
                 }
 
-                Runtime.viewportShading = originalShading;
+                // Restore
+                Runtime.viewportShading = origShading;
+                Runtime.backgroundGradientTop = origTop;
+                Runtime.backgroundGradientBottom = origBot;
             }
             catch (Exception ex)
             {
@@ -959,7 +983,6 @@ namespace AnimationRecorder
             Bitmap result = new Bitmap(source.Width, source.Height);
             using (Graphics g = Graphics.FromImage(result))
             {
-                // Use a color matrix to convert to grayscale
                 float[][] matrix = {
                     new float[] { 0.299f, 0.299f, 0.299f, 0, 0 },
                     new float[] { 0.587f, 0.587f, 0.587f, 0, 0 },
@@ -974,6 +997,66 @@ namespace AnimationRecorder
                     0, 0, source.Width, source.Height, System.Drawing.GraphicsUnit.Pixel, attributes);
             }
             return result;
+        }
+
+        static void RenderSilhouetteFrame(Viewport viewport, int width, int height, string animDir, int frame)
+        {
+            try
+            {
+                var origShading = Runtime.viewportShading;
+                var origTop = Runtime.backgroundGradientTop;
+                var origBot = Runtime.backgroundGradientBottom;
+
+                // Black background + Normal shading (model shows colors, background is black)
+                Runtime.viewportShading = Runtime.ViewportShading.Normal;
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
+
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+
+                int w = viewport.GL_Control.Width;
+                int h = viewport.GL_Control.Height;
+                using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
+                {
+                    // Convert to silhouette: any non-black pixel becomes white
+                    Bitmap sil = new Bitmap(bmp.Width, bmp.Height);
+                    for (int y = 0; y < bmp.Height; y++)
+                    {
+                        for (int x = 0; x < bmp.Width; x++)
+                        {
+                            var pixel = bmp.GetPixel(x, y);
+                            // If pixel has any color (not pure black), it's part of the model
+                            if (pixel.R > 5 || pixel.G > 5 || pixel.B > 5)
+                                sil.SetPixel(x, y, System.Drawing.Color.White);
+                            else
+                                sil.SetPixel(x, y, System.Drawing.Color.Black);
+                        }
+                    }
+
+                    using (Bitmap resized = new Bitmap(width, height))
+                    {
+                        using (Graphics g = Graphics.FromImage(resized))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                            g.DrawImage(sil, 0, 0, width, height);
+                        }
+                        string silDir = Path.Combine(Path.GetDirectoryName(animDir), "silhouette");
+                        Directory.CreateDirectory(silDir);
+                        resized.Save(Path.Combine(silDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
+                    }
+                    sil.Dispose();
+                }
+
+                // Restore
+                Runtime.viewportShading = origShading;
+                Runtime.backgroundGradientTop = origTop;
+                Runtime.backgroundGradientBottom = origBot;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[WARN] Silhouette render: " + ex.Message);
+            }
         }
 
         static void RenderBoneFrame(Viewport viewport, int width, int height, string animDir, int frame)
