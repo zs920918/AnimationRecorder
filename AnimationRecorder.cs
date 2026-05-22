@@ -62,6 +62,8 @@ namespace AnimationRecorder
             string animFilter = parsedArgs.ContainsKey("--anim") ? parsedArgs["--anim"] : "";
             float brightness = parsedArgs.ContainsKey("--brightness") ? float.Parse(parsedArgs["--brightness"]) : 1.0f;
             bool trackModel = parsedArgs.ContainsKey("--track");
+            bool boneMode = parsedArgs.ContainsKey("--bone");
+            bool normalMode = parsedArgs.ContainsKey("--normal");
 
             if (!File.Exists(gfpakPath))
             {
@@ -75,7 +77,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -87,7 +89,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -477,6 +479,18 @@ namespace AnimationRecorder
                                 if (toSave != bmp) toSave.Dispose();
                             }
 
+                            // Bone mode: render skeleton-only frame
+                            if (boneMode)
+                            {
+                                RenderBoneFrame(viewport, width, height, animDir, frame);
+                            }
+
+                            // Normal mode: render normal map (RGB = normal direction)
+                            if (normalMode)
+                            {
+                                RenderNormalFrame(viewport, width, height, animDir, frame);
+                            }
+
                             if (frame % 10 == 0 || frame == totalFrames - 1)
                                 Console.WriteLine("[Recorder]   Frame " + (frame + 1) + "/" + totalFrames);
                         }
@@ -849,56 +863,116 @@ namespace AnimationRecorder
             return result;
         }
 
-        static Bitmap CenterModelInImageFast(Bitmap source)
+        static void RenderNormalFrame(Viewport viewport, int width, int height, string animDir, int frame)
         {
-            // Use byte array for fast pixel access
-            var data = source.LockBits(new System.Drawing.Rectangle(0, 0, source.Width, source.Height),
-                System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
-            byte[] pixels = new byte[data.Stride * data.Height];
-            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
-            source.UnlockBits(data);
-
-            long sumX = 0, sumY = 0, count = 0;
-            int step = 8;
-
-            for (int y = 0; y < data.Height; y += step)
+            try
             {
-                for (int x = 0; x < data.Width; x += step)
+                // Save original shading mode
+                var originalShading = Runtime.viewportShading;
+
+                // Set to Normal mode (renderType=1 = normals as RGB colors)
+                Runtime.viewportShading = Runtime.ViewportShading.Normal;
+
+                // Render
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+
+                // Capture
+                int w = viewport.GL_Control.Width;
+                int h = viewport.GL_Control.Height;
+                using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
-                    int offset = y * data.Stride + x * 4;
-                    byte b = pixels[offset]; byte g = pixels[offset + 1]; byte r = pixels[offset + 2];
-                    if (r < 200 || g < 200 || b < 200)
+                    using (Bitmap resized = new Bitmap(width, height))
                     {
-                        sumX += x; sumY += y; count++;
+                        using (Graphics g = Graphics.FromImage(resized))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(bmp, 0, 0, width, height);
+                        }
+                        string normalDir = Path.Combine(Path.GetDirectoryName(animDir), "normal");
+                        Directory.CreateDirectory(normalDir);
+                        resized.Save(Path.Combine(normalDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
                     }
                 }
+
+                // Restore original shading
+                Runtime.viewportShading = originalShading;
             }
-
-            if (count < 10) return source;
-
-            float modelCenterX = (float)sumX / count;
-            float modelCenterY = (float)sumY / count;
-            float imageCenterX = source.Width / 2f;
-            float imageCenterY = source.Height / 2f;
-
-            int shiftX = (int)(imageCenterX - modelCenterX);
-            int shiftY = (int)(imageCenterY - modelCenterY);
-
-            if (Math.Abs(shiftX) < 5 && Math.Abs(shiftY) < 5) return source;
-
-            // Create new bitmap with model centered
-            Bitmap result = new Bitmap(source.Width, source.Height);
-            using (Graphics g = Graphics.FromImage(result))
+            catch (Exception ex)
             {
-                g.Clear(System.Drawing.Color.White);
-                g.DrawImage(source, shiftX, shiftY);
+                Console.WriteLine("[WARN] Normal render: " + ex.Message);
             }
+        }
 
-            // Dispose original to free memory
-            source.Dispose();
+        static void RenderBoneFrame(Viewport viewport, int width, int height, string animDir, int frame)
+        {
+            try
+            {
+                var editor = LibraryGUI.GetObjectEditor();
+                if (editor == null) return;
 
-            return result;
+                // Hide all mesh renderers, show only skeleton
+                foreach (var dc in editor.DrawableContainers)
+                {
+                    foreach (var d in dc.Drawables)
+                    {
+                        // Hide mesh renderers
+                        if (d.GetType().Name == "GFBMDL_Render")
+                            d.Visible = false;
+
+                        // Show skeleton
+                        if (d is Toolbox.Library.STSkeleton)
+                            ((Toolbox.Library.STSkeleton)d).Visible = true;
+                    }
+                }
+
+                // Enable bone rendering, disable grid/axis
+                Runtime.renderBones = true;
+                Runtime.displayGrid = false;
+                Runtime.displayAxisLines = false;
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
+
+                // Render
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+
+                // Capture
+                int w = viewport.GL_Control.Width;
+                int h = viewport.GL_Control.Height;
+                using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
+                {
+                    using (Bitmap resized = new Bitmap(width, height))
+                    {
+                        using (Graphics g = Graphics.FromImage(resized))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(bmp, 0, 0, width, height);
+                        }
+                        string boneDir = Path.Combine(Path.GetDirectoryName(animDir), "bone");
+                        Directory.CreateDirectory(boneDir);
+                        resized.Save(Path.Combine(boneDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
+                    }
+                }
+
+                // Restore: show meshes, hide skeleton, reset colors
+                foreach (var dc in editor.DrawableContainers)
+                {
+                    foreach (var d in dc.Drawables)
+                    {
+                        if (d.GetType().Name == "GFBMDL_Render")
+                            d.Visible = true;
+                        if (d is Toolbox.Library.STSkeleton)
+                            ((Toolbox.Library.STSkeleton)d).Visible = false;
+                    }
+                }
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[WARN] Bone render: " + ex.Message);
+            }
         }
 
         static Dictionary<string, string> ParseArgs(string[] args)
