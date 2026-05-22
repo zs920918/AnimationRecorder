@@ -449,8 +449,10 @@ namespace AnimationRecorder
                             // Ensure default shading for regular capture
                             Runtime.viewportShading = Runtime.ViewportShading.Default;
                             Application.DoEvents();
-                            Thread.Sleep(10);
-
+                            Thread.Sleep(50);
+                            // Double-refresh to ensure shading takes effect
+                            viewport.GL_Control.Refresh();
+                            Application.DoEvents();
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
 
@@ -886,12 +888,13 @@ namespace AnimationRecorder
         {
             try
             {
-                var origShading = Runtime.viewportShading;
                 Runtime.viewportShading = shading;
-
+                Application.DoEvents();
+                Thread.Sleep(30);
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
-                Thread.Sleep(20);
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
 
                 int w = viewport.GL_Control.Width;
                 int h = viewport.GL_Control.Height;
@@ -913,7 +916,8 @@ namespace AnimationRecorder
                     }
                 }
 
-                Runtime.viewportShading = origShading;
+                // Restore to default shading
+                Runtime.viewportShading = Runtime.ViewportShading.Default;
             }
             catch (Exception ex)
             {
