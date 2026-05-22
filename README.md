@@ -97,6 +97,26 @@ AnimationRecorder.exe --gfpak "pm0006_00.gfpak" --output "D:\output" --all-direc
 AnimationRecorder.exe --gfpak "pm0006_00.gfpak" --output "D:\output" --all-directions --cam-fov 0.3
 ```
 
+## 渲染模式
+
+除了默认的普通渲染，还支持三种特殊渲染模式。每种模式的输出保存在每个方向文件夹的子目录中。
+
+| 参数 | 输出目录 | 说明 | 背景 |
+|------|---------|------|------|
+| `--normal` | `normal/` | Normal Map（RGB = 法线方向） | 黑底 |
+| `--gray` | `gray/` | 白模（无纹理，保留光照阴影） | 黑底 |
+| `--silhouette` | `silhouette/` | 黑白遮罩（模型白色，背景黑色） | 黑底 |
+
+可同时使用多种模式：
+
+```bash
+# 同时输出普通渲染 + Normal + 灰模 + 遮罩
+AnimationRecorder.exe --gfpak "xxx.gfpak" --output "D:\output" --direction Front --normal --gray --silhouette
+
+# 只输出灰模
+AnimationRecorder.exe --gfpak "xxx.gfpak" --output "D:\output" --all-directions --gray
+```
+
 ## 模型跟踪
 
 `--track` 参数启用模型跟踪，适用于走路、跑步等模型会移动的动画。会自动抵消模型的水平移动，保持模型在画面中央。
@@ -121,6 +141,11 @@ AnimationRecorder.exe --gfpak "xxx.gfpak" --output "D:\output" --all-directions 
 | `--ffmpeg` | FFmpeg 路径 | 自动查找 |
 | `--anim` | 过滤动画名（部分匹配） | 全部 |
 | `--test8` | 只输出动画列表 | - |
+| `--normal` | 输出 Normal Map | - |
+| `--gray` | 输出白模灰度图 | - |
+| `--silhouette` | 输出黑白遮罩 | - |
+| `--brightness` | 亮度调整（1.0=原样，1.5=更亮） | 1.0 |
+| `--track` | 启用模型跟踪 | - |
 
 ## 完整示例
 
@@ -140,15 +165,25 @@ lib\AnimationRecorder.exe ^
 
 ```
 output/
-└── pm0006_00_ba01_land01.gfbanm/
-    ├── Front_45/
-    │   ├── 000000.jpg
-    │   ├── 000001.jpg
-    │   └── ...
-    ├── Front_45.mp4
-    ├── FrontLeft_45/
-    ├── FrontLeft_45.mp4
-    └── ...（共 9 个方向）
+└── pm0006_00/
+    └── pm0006_00_ba01_land01.gfbanm/
+        ├── Front_45/           ← 普通渲染（JPG）
+        │   ├── 000001.jpg
+        │   ├── 000002.jpg
+        │   └── ...
+        ├── Front_45.mp4
+        ├── normal/             ← Normal Map（PNG，黑底）
+        │   ├── 000001.png
+        │   └── ...
+        ├── gray/               ← 白模灰度图（PNG，黑底）
+        │   ├── 000001.png
+        │   └── ...
+        ├── silhouette/         ← 黑白遮罩（PNG，黑底）
+        │   ├── 000001.png
+        │   └── ...
+        ├── FrontLeft_45/
+        ├── FrontLeft_45.mp4
+        └── ...（共 9 个方向）
 ```
 
 ## 依赖
