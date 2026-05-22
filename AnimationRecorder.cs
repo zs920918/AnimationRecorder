@@ -64,6 +64,7 @@ namespace AnimationRecorder
             bool trackModel = parsedArgs.ContainsKey("--track");
             bool boneMode = parsedArgs.ContainsKey("--bone");
             bool normalMode = parsedArgs.ContainsKey("--normal");
+            bool grayMode = parsedArgs.ContainsKey("--gray");
 
             if (!File.Exists(gfpakPath))
             {
@@ -77,7 +78,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -89,7 +90,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -491,6 +492,12 @@ namespace AnimationRecorder
                                 RenderNormalFrame(viewport, width, height, animDir, frame);
                             }
 
+                            // Gray mode: render grayscale with lighting
+                            if (grayMode)
+                            {
+                                RenderGrayFrame(viewport, width, height, animDir, frame, brightness);
+                            }
+
                             if (frame % 10 == 0 || frame == totalFrames - 1)
                                 Console.WriteLine("[Recorder]   Frame " + (frame + 1) + "/" + totalFrames);
                         }
@@ -867,17 +874,12 @@ namespace AnimationRecorder
         {
             try
             {
-                // Save original shading mode
                 var originalShading = Runtime.viewportShading;
-
-                // Set to Normal mode (renderType=1 = normals as RGB colors)
                 Runtime.viewportShading = Runtime.ViewportShading.Normal;
 
-                // Render
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
 
-                // Capture
                 int w = viewport.GL_Control.Width;
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
@@ -895,13 +897,83 @@ namespace AnimationRecorder
                     }
                 }
 
-                // Restore original shading
                 Runtime.viewportShading = originalShading;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[WARN] Normal render: " + ex.Message);
             }
+        }
+
+        static void RenderGrayFrame(Viewport viewport, int width, int height, string animDir, int frame, float brightness)
+        {
+            try
+            {
+                // Use default shading (with lighting)
+                var originalShading = Runtime.viewportShading;
+                Runtime.viewportShading = Runtime.ViewportShading.Default;
+
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+
+                int w = viewport.GL_Control.Width;
+                int h = viewport.GL_Control.Height;
+                using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
+                {
+                    // Convert to grayscale
+                    Bitmap gray = ToGrayscale(bmp);
+
+                    // Apply brightness
+                    if (Math.Abs(brightness - 1.0f) > 0.01f)
+                    {
+                        var adjusted = AdjustBrightness(gray, brightness);
+                        gray.Dispose();
+                        gray = adjusted;
+                    }
+
+                    // Resize
+                    using (Bitmap resized = new Bitmap(width, height))
+                    {
+                        using (Graphics g = Graphics.FromImage(resized))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(gray, 0, 0, width, height);
+                        }
+                        string grayDir = Path.Combine(Path.GetDirectoryName(animDir), "gray");
+                        Directory.CreateDirectory(grayDir);
+                        resized.Save(Path.Combine(grayDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
+                    }
+                    gray.Dispose();
+                }
+
+                Runtime.viewportShading = originalShading;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[WARN] Gray render: " + ex.Message);
+            }
+        }
+
+        static Bitmap ToGrayscale(Bitmap source)
+        {
+            Bitmap result = new Bitmap(source.Width, source.Height);
+            using (Graphics g = Graphics.FromImage(result))
+            {
+                // Use a color matrix to convert to grayscale
+                float[][] matrix = {
+                    new float[] { 0.299f, 0.299f, 0.299f, 0, 0 },
+                    new float[] { 0.587f, 0.587f, 0.587f, 0, 0 },
+                    new float[] { 0.114f, 0.114f, 0.114f, 0, 0 },
+                    new float[] { 0, 0, 0, 1, 0 },
+                    new float[] { 0, 0, 0, 0, 1 }
+                };
+                var colorMatrix = new System.Drawing.Imaging.ColorMatrix(matrix);
+                var attributes = new System.Drawing.Imaging.ImageAttributes();
+                attributes.SetColorMatrix(colorMatrix);
+                g.DrawImage(source, new System.Drawing.Rectangle(0, 0, source.Width, source.Height),
+                    0, 0, source.Width, source.Height, System.Drawing.GraphicsUnit.Pixel, attributes);
+            }
+            return result;
         }
 
         static void RenderBoneFrame(Viewport viewport, int width, int height, string animDir, int frame)
