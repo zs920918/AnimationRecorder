@@ -448,6 +448,8 @@ namespace AnimationRecorder
 
                             // Ensure default shading for regular capture
                             Runtime.viewportShading = Runtime.ViewportShading.Default;
+                            Application.DoEvents();
+                            Thread.Sleep(10);
 
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
