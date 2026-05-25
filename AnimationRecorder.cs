@@ -289,7 +289,7 @@ namespace AnimationRecorder
                 List<int> directions = new List<int>();
                 if (allDirections)
                 {
-                    for (int i = 0; i < 8; i++) directions.Add(i);
+                    for (int i = 0; i < 9; i++) directions.Add(i);
                 }
                 else
                 {
@@ -370,12 +370,12 @@ namespace AnimationRecorder
                             viewport.GL_Control.Fov = viewport.GL_Control.Fov / camDistance;
 
                         // Rotate the MODEL for each direction
-                        // Y axis = horizontal rotation, X axis = 45掳 downward tilt
-                        RotateModelAxis(viewport, dirIdx * 45f, 'Y');
-                        RotateModelAxis(viewport, 45f, 'X');  // 淇 (looking down)
-
-                        // Warm up
-                        for (int i = 0; i < 5; i++)
+                        // Rotate the MODEL for each direction
+                        float dirAngle = (dirIdx < 8) ? dirIdx * 45f : -30f;  // standard 8 = dirIdx*45, Left30 = -30
+                        float dirTilt = (dirIdx < 8) ? 45f : 0f;  // standard 8 = 45deg tilt, Right30 = no tilt
+                        RotateModelAxis(viewport, dirAngle, 'Y');
+                        if (dirTilt > 0)
+                            RotateModelAxis(viewport, dirTilt, 'X');
                         {
                             viewport.GL_Control.Refresh();
                             Application.DoEvents();
@@ -394,10 +394,11 @@ namespace AnimationRecorder
                             animController.NextFrame();
 
                             // Rotate model after animation update
-                            RotateModelAxis(viewport, dirIdx * 45f, 'Y');
-                            RotateModelAxis(viewport, 45f, 'X');
-
-                            // Track model BEFORE render: counteract X movement via ModelTransform
+                            // Rotate model after animation update
+                            RotateModelAxis(viewport, dirAngle, 'Y');
+                            if (dirTilt > 0)
+                                RotateModelAxis(viewport, dirTilt, 'X');
+                            // Track model BEFORE render: counteract movement in all axes via ModelTransform
                             if (trackModel)
                             {
                                 try
@@ -414,7 +415,7 @@ namespace AnimationRecorder
                                                     var field = d.GetType().GetField("ModelTransform");
                                                     if (field != null)
                                                     {
-                                                        float moveX = 0;
+                                                        float moveX = 0, moveY = 0, moveZ = 0;
                                                         foreach (var dc2 in editor.DrawableContainers)
                                                         {
                                                             foreach (var d2 in dc2.Drawables)
@@ -426,6 +427,8 @@ namespace AnimationRecorder
                                                                         if (bone.Text == "Waist")
                                                                         {
                                                                             moveX = bone.Transform.M41;
+                                                                            moveY = bone.Transform.M42;
+                                                                            moveZ = bone.Transform.M43;
                                                                             goto foundWaist;
                                                                         }
                                                                     }
@@ -434,7 +437,12 @@ namespace AnimationRecorder
                                                         }
                                                         foundWaist:
                                                         float scale = Runtime.previewScale;
-                                                        field.SetValue(d, OpenTK.Matrix4.CreateTranslation(-moveX * scale, 0, 0));
+                                                        // Counteract movement in all 3 axes
+                                                        field.SetValue(d, OpenTK.Matrix4.CreateTranslation(
+                                                            -moveX * scale,
+                                                            -moveY * scale,
+                                                            -moveZ * scale
+                                                        ));
                                                     }
                                                     goto doneTrack;
                                                 }
@@ -536,6 +544,13 @@ namespace AnimationRecorder
                             EncodeToMp4(ffmpeg, animDir, mp4Path, fps);
                             Console.WriteLine("[Recorder] MP4: " + mp4Path);
                         }
+                    }
+
+                    // Create 3x3 composite images for each frame
+                    if (allDirections)
+                    {
+                        Console.WriteLine("[Recorder] Creating composite images...");
+                        CreateCompositeImages(outputDir, animName, totalFrames, width, height);
                     }
                 }
             }
@@ -842,16 +857,67 @@ namespace AnimationRecorder
 
         static string GetDirectionName(int idx)
         {
-            string[] names = new string[] { "Front", "FrontLeft", "Left", "BackLeft", "Back", "BackRight", "Right", "FrontRight" };
+            string[] names = new string[] { "Front_45", "FrontLeft_45", "Left_45", "BackLeft_45", "Back_45", "BackRight_45", "Right_45", "FrontRight_45", "Left30_0" };
             return names[idx];
         }
 
-        static float GetDirectionAngle(int idx)
+        static void CreateCompositeImages(string outputDir, string animName, int totalFrames, int width, int height)
         {
-            // CamRotY=0 is Front-Right in the Toolbox orientation cube
-            // Front = -45, each step is +45 degrees clockwise
-            float[] angles = new float[] { -45, 0, 45, 90, 135, 180, 225, 270 };
-            return angles[idx];
+            string[] layout = new string[] {
+                "BackRight_45", "Back_45", "BackLeft_45",
+                "Right_45", "Left30_0", "Left_45",
+                "FrontRight_45", "Front_45", "FrontLeft_45"
+            };
+
+            string animDir = Path.Combine(outputDir, animName);
+            string compositeDir = Path.Combine(animDir, "composite");
+            Directory.CreateDirectory(compositeDir);
+
+            int compositeW = width * 3;
+            int compositeH = height * 3;
+            int frameCount = 0;
+
+            for (int frame = 0; frame < totalFrames; frame++)
+            {
+                string frameName = frame.ToString("D6") + ".jpg";
+                string pngFrameName = frame.ToString("D6") + ".png";
+
+                bool allExist = true;
+                foreach (string dir in layout)
+                {
+                    if (!File.Exists(Path.Combine(animDir, dir, frameName)) &&
+                        !File.Exists(Path.Combine(animDir, dir, pngFrameName)))
+                    {
+                        allExist = false;
+                        break;
+                    }
+                }
+                if (!allExist) continue;
+
+                using (Bitmap composite = new Bitmap(compositeW, compositeH))
+                {
+                    using (Graphics g = Graphics.FromImage(composite))
+                    {
+                        g.Clear(System.Drawing.Color.Black);
+                        for (int i = 0; i < 9; i++)
+                        {
+                            int col = i % 3;
+                            int row = i / 3;
+                            string tilePath = Path.Combine(animDir, layout[i], frameName);
+                            if (!File.Exists(tilePath))
+                                tilePath = Path.Combine(animDir, layout[i], pngFrameName);
+                            if (File.Exists(tilePath))
+                            {
+                                using (Bitmap tile = new Bitmap(tilePath))
+                                    g.DrawImage(tile, col * width, row * height, width, height);
+                            }
+                        }
+                    }
+                    composite.Save(Path.Combine(compositeDir, frameName), ImageFormat.Jpeg);
+                    frameCount++;
+                }
+            }
+            Console.WriteLine("[Recorder] Composite: " + frameCount + " frames");
         }
 
         static string SanitizeFileName(string name)
@@ -1243,3 +1309,4 @@ namespace AnimationRecorder
         }
     }
 }
+
