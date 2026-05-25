@@ -551,6 +551,18 @@ namespace AnimationRecorder
                     {
                         Console.WriteLine("[Recorder] Creating composite images...");
                         CreateCompositeImages(outputDir, animName, totalFrames, width, height);
+
+                        // Encode composite video
+                        if (!string.IsNullOrEmpty(ffmpeg))
+                        {
+                            string compositeDir = Path.Combine(outputDir, animName, "composite");
+                            string compositeMp4 = Path.Combine(outputDir, animName, "composite.mp4");
+                            if (Directory.Exists(compositeDir) && Directory.GetFiles(compositeDir, "*.jpg").Length > 0)
+                            {
+                                EncodeToMp4(ffmpeg, compositeDir, compositeMp4, fps);
+                                Console.WriteLine("[Recorder] Composite MP4: " + compositeMp4);
+                            }
+                        }
                     }
                 }
             }
