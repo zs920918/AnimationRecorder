@@ -1178,18 +1178,23 @@ namespace AnimationRecorder
                 Runtime.renderBones = true;
                 Runtime.displayGrid = false;
                 Runtime.displayAxisLines = false;
+                Runtime.bonePointSize = 0.5f;  // Thin bone lines
                 Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
                 Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
 
                 // Render
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
+                Thread.Sleep(50);
 
                 // Capture
                 int w = viewport.GL_Control.Width;
                 int h = viewport.GL_Control.Height;
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
+                    // Replace any non-black background with pure black
+                    ReplaceWhiteBackground(bmp);
+
                     using (Bitmap resized = new Bitmap(width, height))
                     {
                         using (Graphics g = Graphics.FromImage(resized))
@@ -1202,6 +1207,10 @@ namespace AnimationRecorder
                         resized.Save(Path.Combine(boneDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
                     }
                 }
+
+                // Restore
+                Runtime.renderBones = false;
+                Runtime.bonePointSize = 1.0f;
 
                 // Restore: show meshes, hide skeleton, reset colors
                 foreach (var dc in editor.DrawableContainers)
