@@ -1164,9 +1164,28 @@ namespace AnimationRecorder
                 {
                     foreach (var d in dc.Drawables)
                     {
-                        // Hide mesh renderers
-                        if (d.GetType().Name == "GFBMDL_Render")
-                            d.Visible = false;
+                        // Hide mesh renderers by setting IsVisible = false on each mesh
+                        var rendererType = d.GetType();
+                        if (rendererType.Name == "GFBMDL_Render")
+                        {
+                            var meshesField = rendererType.GetProperty("Meshes");
+                            if (meshesField != null)
+                            {
+                                var meshes = meshesField.GetValue(d) as System.Collections.IEnumerable;
+                                if (meshes != null)
+                                {
+                                    foreach (var mesh in meshes)
+                                    {
+                                        var ctrlProp = mesh.GetType().GetProperty("AnimationController");
+                                        if (ctrlProp != null)
+                                        {
+                                            dynamic ctrl = ctrlProp.GetValue(mesh);
+                                            if (ctrl != null) ctrl.IsVisible = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         // Show skeleton
                         if (d is Toolbox.Library.STSkeleton)
@@ -1211,6 +1230,34 @@ namespace AnimationRecorder
                 // Restore
                 Runtime.renderBones = false;
                 Runtime.bonePointSize = 1.0f;
+                // Restore mesh visibility
+                foreach (var dc in editor.DrawableContainers)
+                {
+                    foreach (var d in dc.Drawables)
+                    {
+                        var rendererType = d.GetType();
+                        if (rendererType.Name == "GFBMDL_Render")
+                        {
+                            var meshesField = rendererType.GetProperty("Meshes");
+                            if (meshesField != null)
+                            {
+                                var meshes = meshesField.GetValue(d) as System.Collections.IEnumerable;
+                                if (meshes != null)
+                                {
+                                    foreach (var mesh in meshes)
+                                    {
+                                        var ctrlProp = mesh.GetType().GetProperty("AnimationController");
+                                        if (ctrlProp != null)
+                                        {
+                                            dynamic ctrl = ctrlProp.GetValue(mesh);
+                                            if (ctrl != null) ctrl.IsVisible = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Restore: show meshes, hide skeleton, reset colors
                 foreach (var dc in editor.DrawableContainers)
