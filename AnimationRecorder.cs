@@ -1180,7 +1180,10 @@ namespace AnimationRecorder
             {
                 int w = viewport.GL_Control.Width;
                 int h = viewport.GL_Control.Height;
-                string boneDir = Path.Combine(Path.GetDirectoryName(animDir), "bone");
+                // boneDir should include direction: outputDir/animName/bone/dirName
+                string dirName = Path.GetFileName(animDir);
+                string animDirParent = Path.GetDirectoryName(animDir);
+                string boneDir = Path.Combine(animDirParent, "bone", dirName);
                 Directory.CreateDirectory(boneDir);
 
                 // Get skeleton
@@ -1199,48 +1202,66 @@ namespace AnimationRecorder
                 
                 if (skeleton == null || skeleton.bones.Count == 0) return;
 
-                // Force a render to update animation state
+                // Force a render to update animation and matrices
                 viewport.GL_Control.Refresh();
                 Application.DoEvents();
-                Thread.Sleep(30);
+                Thread.Sleep(50);
 
-                // DO NOT call skeleton.update() here - the animation panel already calls it
-                // Calling it again might reset the transforms
+                // Read actual GL matrices after render
+                viewport.GL_Control.MakeCurrent();
+                float[] mvArr = new float[16];
+                float[] pjArr = new float[16];
+                OpenTK.Graphics.OpenGL.GL.GetFloat(OpenTK.Graphics.OpenGL.GetPName.ModelviewMatrix, mvArr);
+                OpenTK.Graphics.OpenGL.GL.GetFloat(OpenTK.Graphics.OpenGL.GetPName.ProjectionMatrix, pjArr);
 
-                // Read camera parameters from GL control
-                var glControl = viewport.GL_Control;
-                var glType = glControl.GetType();
-                
-                Vector3 camTarget = Vector3.Zero;
-                float camDist = 10f;
-                float camRotX = 0f, camRotY = 0f;
-                float fov = 0.5236f;
-                
-                try {
-                    var t = glType.GetField("CameraTarget");
-                    if (t != null) camTarget = (Vector3)t.GetValue(glControl);
-                    var d = glType.GetField("CameraDistance");
-                    if (d != null) camDist = (float)d.GetValue(glControl);
-                    var rx = glType.GetProperty("CamRotX");
-                    if (rx != null) camRotX = (float)rx.GetValue(glControl);
-                    var ry = glType.GetProperty("CamRotY");
-                    if (ry != null) camRotY = (float)ry.GetValue(glControl);
-                    var f = glType.GetField("fov");
-                    if (f != null) fov = (float)f.GetValue(glControl);
-                } catch {}
+                Matrix4 mv = new Matrix4(
+                    mvArr[0], mvArr[1], mvArr[2], mvArr[3],
+                    mvArr[4], mvArr[5], mvArr[6], mvArr[7],
+                    mvArr[8], mvArr[9], mvArr[10], mvArr[11],
+                    mvArr[12], mvArr[13], mvArr[14], mvArr[15]);
 
-                // Build view matrix: orbit camera
-                // 1. Move to camera distance along -Z
-                // 2. Rotate around X (pitch)
-                // 3. Rotate around Y (yaw)
-                // 4. Translate to look at target
-                Matrix4 viewMatrix = Matrix4.CreateTranslation(0, 0, -camDist) *
-                                     Matrix4.CreateRotationX(camRotX) *
-                                     Matrix4.CreateRotationY(camRotY) *
-                                     Matrix4.CreateTranslation(-camTarget);
+                Matrix4 pj = new Matrix4(
+                    pjArr[0], pjArr[1], pjArr[2], pjArr[3],
+                    pjArr[4], pjArr[5], pjArr[6], pjArr[7],
+                    pjArr[8], pjArr[9], pjArr[10], pjArr[11],
+                    pjArr[12], pjArr[13], pjArr[14], pjArr[15]);
 
-                float aspect = (float)width / height;
-                Matrix4 projMatrix = Matrix4.CreatePerspectiveFieldOfView(fov, aspect, 0.01f, 1000f);
+                // Check if matrices are valid (not identity)
+                bool matricesValid = (mv.M41 != 0 || mv.M42 != 0 || mv.M43 != 0 || 
+                                      mv.M11 != 1 || mv.M22 != 1 || mv.M33 != 1);
+
+                // If GL matrices are not valid, build from camera parameters
+                if (!matricesValid)
+                {
+                    var glControl = viewport.GL_Control;
+                    var glType = glControl.GetType();
+                    
+                    Vector3 camTarget = Vector3.Zero;
+                    float camDist = 10f;
+                    float camRotX = 0f, camRotY = 0f;
+                    float fov = 0.5236f;
+                    
+                    try {
+                        var t = glType.GetField("CameraTarget");
+                        if (t != null) camTarget = (Vector3)t.GetValue(glControl);
+                        var d = glType.GetField("CameraDistance");
+                        if (d != null) camDist = (float)d.GetValue(glControl);
+                        var rx = glType.GetProperty("CamRotX");
+                        if (rx != null) camRotX = (float)rx.GetValue(glControl);
+                        var ry = glType.GetProperty("CamRotY");
+                        if (ry != null) camRotY = (float)ry.GetValue(glControl);
+                        var f = glType.GetField("fov");
+                        if (f != null) fov = (float)f.GetValue(glControl);
+                    } catch {}
+
+                    mv = Matrix4.CreateTranslation(0, 0, -camDist) *
+                         Matrix4.CreateRotationX(camRotX) *
+                         Matrix4.CreateRotationY(camRotY) *
+                         Matrix4.CreateTranslation(-camTarget);
+
+                    float aspect = (float)width / height;
+                    pj = Matrix4.CreatePerspectiveFieldOfView(fov, aspect, 0.01f, 1000f);
+                }
 
                 // Get model transform from renderer
                 Matrix4 modelMatrix = Matrix4.Identity;
@@ -1273,9 +1294,8 @@ namespace AnimationRecorder
                 }
 
                 // Skeleton model = scale * modelTransform
-                // For row vectors: v * (Scale * Translation) = first scale, then translate
                 Matrix4 skelModel = Matrix4.CreateScale(Runtime.previewScale) * rendererModelMatrix;
-                Matrix4 mvp = skelModel * viewMatrix * projMatrix;
+                Matrix4 mvp = skelModel * mv * pj;
 
                 // Draw bones (skip Eff/helper bones)
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
