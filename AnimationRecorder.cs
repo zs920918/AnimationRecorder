@@ -105,7 +105,7 @@ namespace AnimationRecorder
             }
 
             Console.WriteLine("[Recorder] Creating hidden MainForm...");
-            MainForm mainForm = new MainForm();
+            dynamic mainForm = Activator.CreateInstance("Toolbox", "Toolbox.MainForm").Unwrap();
             mainForm.StartPosition = FormStartPosition.Manual;
             mainForm.Location = new System.Drawing.Point(-2000, -2000);
             mainForm.Size = new System.Drawing.Size(1920, 1080);
@@ -729,12 +729,9 @@ namespace AnimationRecorder
             }
         }
 
-        static ObjectEditor FindObjectEditor(MainForm mainForm)
+        static ObjectEditor FindObjectEditor(dynamic mainForm)
         {
-            foreach (Form child in mainForm.MdiChildren)
-            {
-                if (child is ObjectEditor) return (ObjectEditor)child;
-            }
+            try { foreach (Form child in mainForm.MdiChildren) { if (child is ObjectEditor) return (ObjectEditor)child; } } catch { }
             return LibraryGUI.GetObjectEditor();
         }
 
@@ -1156,80 +1153,152 @@ namespace AnimationRecorder
         {
             try
             {
+                int w = viewport.GL_Control.Width;
+                int h = viewport.GL_Control.Height;
+                string boneDir = Path.Combine(Path.GetDirectoryName(animDir), "bone");
+                Directory.CreateDirectory(boneDir);
+
+                // Get skeleton
                 var editor = LibraryGUI.GetObjectEditor();
                 if (editor == null) return;
-
-                // Hide all mesh renderers, show only skeleton
+                
+                STSkeleton skeleton = null;
                 foreach (var dc in editor.DrawableContainers)
                 {
                     foreach (var d in dc.Drawables)
                     {
-                        // Hide meshes via AnimationController.IsVisible
-                        var rendererType = d.GetType();
-                        if (rendererType.Name == "GFBMDL_Render")
-                        {
-                            var meshesField = rendererType.GetProperty("Meshes");
-                            if (meshesField != null)
-                            {
-                                var meshes = meshesField.GetValue(d) as System.Collections.IEnumerable;
-                                if (meshes != null)
-                                {
-                                    foreach (var mesh in meshes)
-                                    {
-                                        var ctrlField = mesh.GetType().GetField("AnimationController");
-                                        if (ctrlField != null)
-                                        {
-                                            var ctrl = ctrlField.GetValue(mesh);
-                                            if (ctrl != null)
-                                            {
-                                                var visField = ctrl.GetType().GetField("IsVisible");
-                                                if (visField != null) visField.SetValue(ctrl, false);
-                                            }
-                                        }
-                                        // Also set Checked to false
-                                        var checkedField = mesh.GetType().GetField("Checked");
-                                        if (checkedField != null) checkedField.SetValue(mesh, false);
-                                    }
-                                }
-                            }
-                        }
+                        if (d is STSkeleton) { skeleton = (STSkeleton)d; break; }
+                    }
+                    if (skeleton != null) break;
+                }
+                
+                if (skeleton == null || skeleton.bones.Count == 0) return;
 
-                        // Show skeleton
-                        if (d is Toolbox.Library.STSkeleton)
-                            ((Toolbox.Library.STSkeleton)d).Visible = true;
+                // Force a render to update animation state
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+                Thread.Sleep(30);
+
+                // DO NOT call skeleton.update() here - the animation panel already calls it
+                // Calling it again might reset the transforms
+
+                // Read camera parameters from GL control
+                var glControl = viewport.GL_Control;
+                var glType = glControl.GetType();
+                
+                Vector3 camTarget = Vector3.Zero;
+                float camDist = 10f;
+                float camRotX = 0f, camRotY = 0f;
+                float fov = 0.5236f;
+                
+                try {
+                    var t = glType.GetField("CameraTarget");
+                    if (t != null) camTarget = (Vector3)t.GetValue(glControl);
+                    var d = glType.GetField("CameraDistance");
+                    if (d != null) camDist = (float)d.GetValue(glControl);
+                    var rx = glType.GetProperty("CamRotX");
+                    if (rx != null) camRotX = (float)rx.GetValue(glControl);
+                    var ry = glType.GetProperty("CamRotY");
+                    if (ry != null) camRotY = (float)ry.GetValue(glControl);
+                    var f = glType.GetField("fov");
+                    if (f != null) fov = (float)f.GetValue(glControl);
+                } catch {}
+
+                // Build view matrix: orbit camera
+                // 1. Move to camera distance along -Z
+                // 2. Rotate around X (pitch)
+                // 3. Rotate around Y (yaw)
+                // 4. Translate to look at target
+                Matrix4 viewMatrix = Matrix4.CreateTranslation(0, 0, -camDist) *
+                                     Matrix4.CreateRotationX(camRotX) *
+                                     Matrix4.CreateRotationY(camRotY) *
+                                     Matrix4.CreateTranslation(-camTarget);
+
+                float aspect = (float)width / height;
+                Matrix4 projMatrix = Matrix4.CreatePerspectiveFieldOfView(fov, aspect, 0.01f, 1000f);
+
+                // Get model transform from renderer
+                Matrix4 modelMatrix = Matrix4.Identity;
+                foreach (var dc in editor.DrawableContainers)
+                {
+                    foreach (var d in dc.Drawables)
+                    {
+                        if (d.GetType().Name == "GFBMDL_Render")
+                        {
+                            var mf = d.GetType().GetField("ModelTransform");
+                            if (mf != null) modelMatrix = (Matrix4)mf.GetValue(d);
+                            break;
+                        }
                     }
                 }
 
-                // Enable bone rendering, disable grid/axis
-                Runtime.renderBones = true;
-                Runtime.displayGrid = false;
-                Runtime.displayAxisLines = false;
-                Runtime.bonePointSize = 0.5f;  // Thin bone lines
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
+                // Get model transform from renderer (includes --track offset)
+                Matrix4 rendererModelMatrix = Matrix4.Identity;
+                foreach (var dc in editor.DrawableContainers)
+                {
+                    foreach (var d in dc.Drawables)
+                    {
+                        if (d.GetType().Name == "GFBMDL_Render")
+                        {
+                            var mf = d.GetType().GetField("ModelTransform");
+                            if (mf != null) rendererModelMatrix = (Matrix4)mf.GetValue(d);
+                            break;
+                        }
+                    }
+                }
 
-                // Render
-                viewport.GL_Control.Refresh();
-                Application.DoEvents();
-                Thread.Sleep(50);
+                // Skeleton model = scale * modelTransform
+                // For row vectors: v * (Scale * Translation) = first scale, then translate
+                Matrix4 skelModel = Matrix4.CreateScale(Runtime.previewScale) * rendererModelMatrix;
+                Matrix4 mvp = skelModel * viewMatrix * projMatrix;
 
-                // Capture
-                int w = viewport.GL_Control.Width;
-                int h = viewport.GL_Control.Height;
+                // Draw bones (skip Eff/helper bones)
                 using (Bitmap bmp = viewport.CreateScreenshot(w, h, false))
                 {
-                    // Replace any non-black background with pure black
-                    ReplaceWhiteBackground(bmp);
-
                     using (Bitmap resized = new Bitmap(width, height))
                     {
                         using (Graphics g = Graphics.FromImage(resized))
                         {
                             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                             g.DrawImage(bmp, 0, 0, width, height);
+
+                            Pen bonePen = new Pen(Color.Yellow, 2);
+                            Brush jointBrush = Brushes.Red;
+
+                            int drawnBones = 0;
+                            foreach (var bone in skeleton.bones)
+                            {
+                                if (bone.parentIndex < 0 || bone.parentIndex >= skeleton.bones.Count) continue;
+                                
+                                // Skip Eff/helper bones, BodySkin, and root children
+                                if (bone.Text.StartsWith("Eff")) continue;
+                                if (bone.Text.Contains("BodySkin")) continue;
+                                if (bone.parentIndex == 0) continue;
+                                
+                                var parent = skeleton.bones[bone.parentIndex];
+                                if (parent.parentIndex == 0) continue;
+
+                                Vector3 bonePos = bone.Transform.ExtractTranslation();
+                                Vector3 parentPos = parent.Transform.ExtractTranslation();
+
+                                Vector4 clipBone = new Vector4(bonePos, 1) * mvp;
+                                Vector4 clipParent = new Vector4(parentPos, 1) * mvp;
+
+                                if (clipBone.W > 0.01f && clipParent.W > 0.01f)
+                                {
+                                    float sx = (clipBone.X / clipBone.W + 1) * 0.5f * width;
+                                    float sy = (1 - clipBone.Y / clipBone.W) * 0.5f * height;
+                                    float px = (clipParent.X / clipParent.W + 1) * 0.5f * width;
+                                    float py = (1 - clipParent.Y / clipParent.W) * 0.5f * height;
+
+                                    g.DrawLine(bonePen, px, py, sx, sy);
+                                    g.FillEllipse(jointBrush, sx - 3, sy - 3, 6, 6);
+                                    drawnBones++;
+                                }
+                            }
+
+                            bonePen.Dispose();
                         }
-                        string boneDir = Path.Combine(Path.GetDirectoryName(animDir), "bone");
-                        Directory.CreateDirectory(boneDir);
                         resized.Save(Path.Combine(boneDir, frame.ToString("D6") + ".png"), ImageFormat.Png);
                     }
                 }
@@ -1237,52 +1306,6 @@ namespace AnimationRecorder
                 // Restore
                 Runtime.renderBones = false;
                 Runtime.bonePointSize = 1.0f;
-                // Restore mesh visibility
-                foreach (var dc in editor.DrawableContainers)
-                {
-                    foreach (var d in dc.Drawables)
-                    {
-                        var rendererType = d.GetType();
-                        if (rendererType.Name == "GFBMDL_Render")
-                        {
-                            var meshesField = rendererType.GetProperty("Meshes");
-                            if (meshesField != null)
-                            {
-                                var meshes = meshesField.GetValue(d) as System.Collections.IEnumerable;
-                                if (meshes != null)
-                                {
-                                    foreach (var mesh in meshes)
-                                    {
-                                        var ctrlField = mesh.GetType().GetField("AnimationController");
-                                        if (ctrlField != null)
-                                        {
-                                            var ctrl = ctrlField.GetValue(mesh);
-                                            if (ctrl != null)
-                                            {
-                                                var visField = ctrl.GetType().GetField("IsVisible");
-                                                if (visField != null) visField.SetValue(ctrl, true);
-                                            }
-                                        }
-                                        var checkedField = mesh.GetType().GetField("Checked");
-                                        if (checkedField != null) checkedField.SetValue(mesh, true);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Restore: show meshes, hide skeleton, reset colors
-                foreach (var dc in editor.DrawableContainers)
-                {
-                    foreach (var d in dc.Drawables)
-                    {
-                        if (d.GetType().Name == "GFBMDL_Render")
-                            d.Visible = true;
-                        if (d is Toolbox.Library.STSkeleton)
-                            ((Toolbox.Library.STSkeleton)d).Visible = false;
-                    }
-                }
                 Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
                 Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
             }
