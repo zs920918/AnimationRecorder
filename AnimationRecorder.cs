@@ -66,6 +66,7 @@ namespace AnimationRecorder
             bool normalMode = parsedArgs.ContainsKey("--normal");
             bool grayMode = parsedArgs.ContainsKey("--gray");
             bool silhouetteMode = parsedArgs.ContainsKey("--silhouette");
+            bool listBones = parsedArgs.ContainsKey("--list-bones");
 
             if (!File.Exists(gfpakPath))
             {
@@ -79,7 +80,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -91,7 +92,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -222,6 +223,30 @@ namespace AnimationRecorder
                     Environment.Exit(1);
                 }
                 Console.WriteLine("[Recorder] Viewport OK, GL_Control=" + (viewport.GL_Control != null));
+
+                // List bones mode
+                if (listBones)
+                {
+                    foreach (var dc in objectEditor.DrawableContainers)
+                    {
+                        foreach (var d in dc.Drawables)
+                        {
+                            if (d is STSkeleton)
+                            {
+                                var skeleton = (STSkeleton)d;
+                                Console.WriteLine("[BONES] Total: " + skeleton.bones.Count);
+                                for (int i = 0; i < skeleton.bones.Count; i++)
+                                {
+                                    var b = skeleton.bones[i];
+                                    string parentName = b.parentIndex >= 0 ? skeleton.bones[b.parentIndex].Text : "none";
+                                    string isEff = b.Text.StartsWith("Eff") ? " [EFF]" : "";
+                                    Console.WriteLine("[BONES] " + i + ": " + b.Text + " -> " + parentName + isEff);
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
 
                 // Resize the ObjectEditor to be large enough
                 objectEditor.Size = new System.Drawing.Size(1920, 1080);
@@ -1270,13 +1295,17 @@ namespace AnimationRecorder
                             {
                                 if (bone.parentIndex < 0 || bone.parentIndex >= skeleton.bones.Count) continue;
                                 
-                                // Skip Eff/helper bones, BodySkin, and root children
+                                // Skip Eff/helper bones, BodySkin, Feelers (vines), and root children
                                 if (bone.Text.StartsWith("Eff")) continue;
-                                if (bone.Text.Contains("BodySkin")) continue;
+                                if (bone.Text.Contains("Skin")) continue;
+                                if (bone.Text.Contains("Feeler")) continue;
                                 if (bone.parentIndex == 0) continue;
                                 
                                 var parent = skeleton.bones[bone.parentIndex];
                                 if (parent.parentIndex == 0) continue;
+                                
+                                // Also skip if parent name contains Feeler
+                                if (parent.Text.Contains("Feeler")) continue;
 
                                 Vector3 bonePos = bone.Transform.ExtractTranslation();
                                 Vector3 parentPos = parent.Transform.ExtractTranslation();
