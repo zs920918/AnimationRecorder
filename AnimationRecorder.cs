@@ -1164,7 +1164,7 @@ namespace AnimationRecorder
                 {
                     foreach (var d in dc.Drawables)
                     {
-                        // Hide mesh renderers by setting IsVisible = false on each mesh
+                        // Hide meshes via AnimationController.IsVisible
                         var rendererType = d.GetType();
                         if (rendererType.Name == "GFBMDL_Render")
                         {
@@ -1176,12 +1176,19 @@ namespace AnimationRecorder
                                 {
                                     foreach (var mesh in meshes)
                                     {
-                                        var ctrlProp = mesh.GetType().GetProperty("AnimationController");
-                                        if (ctrlProp != null)
+                                        var ctrlField = mesh.GetType().GetField("AnimationController");
+                                        if (ctrlField != null)
                                         {
-                                            dynamic ctrl = ctrlProp.GetValue(mesh);
-                                            if (ctrl != null) ctrl.IsVisible = false;
+                                            var ctrl = ctrlField.GetValue(mesh);
+                                            if (ctrl != null)
+                                            {
+                                                var visField = ctrl.GetType().GetField("IsVisible");
+                                                if (visField != null) visField.SetValue(ctrl, false);
+                                            }
                                         }
+                                        // Also set Checked to false
+                                        var checkedField = mesh.GetType().GetField("Checked");
+                                        if (checkedField != null) checkedField.SetValue(mesh, false);
                                     }
                                 }
                             }
@@ -1246,12 +1253,18 @@ namespace AnimationRecorder
                                 {
                                     foreach (var mesh in meshes)
                                     {
-                                        var ctrlProp = mesh.GetType().GetProperty("AnimationController");
-                                        if (ctrlProp != null)
+                                        var ctrlField = mesh.GetType().GetField("AnimationController");
+                                        if (ctrlField != null)
                                         {
-                                            dynamic ctrl = ctrlProp.GetValue(mesh);
-                                            if (ctrl != null) ctrl.IsVisible = true;
+                                            var ctrl = ctrlField.GetValue(mesh);
+                                            if (ctrl != null)
+                                            {
+                                                var visField = ctrl.GetType().GetField("IsVisible");
+                                                if (visField != null) visField.SetValue(ctrl, true);
+                                            }
                                         }
+                                        var checkedField = mesh.GetType().GetField("Checked");
+                                        if (checkedField != null) checkedField.SetValue(mesh, true);
                                     }
                                 }
                             }
