@@ -253,34 +253,72 @@ namespace AnimationRecorder
                 // Export model mode
                 if (exportModel)
                 {
-                    string exportPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + ".dae");
+                    string exportPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + ".glb");
                     Console.WriteLine("[Export] Exporting model to: " + exportPath);
                     
-                    // Find the GFBMDL model
+                    // Find GFBMDL_Render which has GfbmdlFile
                     foreach (var dc in objectEditor.DrawableContainers)
                     {
-                        Console.WriteLine("[Export] Container: " + dc.Name + " drawables: " + dc.Drawables.Count);
                         foreach (var d in dc.Drawables)
-                        {
-                            Console.WriteLine("[Export]   Drawable: " + d.GetType().Name);
-                            var modelField = d.GetType().GetField("GfbmdlFile");
-                            if (modelField != null)
                             {
-                                var gfbmdl = modelField.GetValue(d);
-                                Console.WriteLine("[Export]   GfbmdlFile: " + (gfbmdl != null));
-                                if (gfbmdl != null)
+                            var rendererType = d.GetType();
+                            if (rendererType.Name == "GFBMDL_Render")
+                            {
+                                var gfbmdlField = rendererType.GetField("GfbmdlFile");
+                                if (gfbmdlField != null)
                                 {
-                                    // Call ExportModel
-                                    var exportMethod = gfbmdl.GetType().GetMethod("ExportModel");
-                                    Console.WriteLine("[Export]   ExportModel method: " + (exportMethod != null));
-                                    if (exportMethod != null)
+                                    var gfbmdl = gfbmdlField.GetValue(d);
+                                    if (gfbmdl != null)
                                     {
-                                        var settings = new DAE.ExportSettings();
-                                        settings.SuppressConfirmDialog = true;
-                                        exportMethod.Invoke(gfbmdl, new object[] { exportPath, settings });
-                                        Console.WriteLine("[Export] Model exported successfully!");
+                                        // Get Model field
+                                        var modelField = gfbmdl.GetType().GetField("Model");
+                                        if (modelField != null)
+                                        {
+                                            var model = modelField.GetValue(gfbmdl);
+                                            if (model != null)
+                                            {
+                                                // Get GenericMaterials and GenericMeshes
+                                                var matsField = model.GetType().GetField("GenericMaterials");
+                                                var objsField = model.GetType().GetField("GenericMeshes");
+                                                
+                                                if (matsField != null && objsField != null)
+                                                {
+                                                    var materials = matsField.GetValue(model) as System.Collections.IList;
+                                                    var meshes = objsField.GetValue(model) as System.Collections.IList;
+                                                    
+                                                    Console.WriteLine("[Export] Found " + (meshes != null ? meshes.Count : 0) + " meshes, " + (materials != null ? materials.Count : 0) + " materials");
+                                                    
+                                                    // Get skeleton
+                                                    STSkeleton skeleton = null;
+                                                    foreach (var dc2 in objectEditor.DrawableContainers)
+                                                    {
+                                                        foreach (var d2 in dc2.Drawables)
+                                                        {
+                                                            if (d2 is STSkeleton) { skeleton = (STSkeleton)d2; break; }
+                                                        }
+                                                        if (skeleton != null) break;
+                                                    }
+                                                    
+                                                    Console.WriteLine("[Export] Skeleton: " + (skeleton != null) + " bones: " + (skeleton != null ? skeleton.bones.Count : 0));
+                                                    
+                                                    // For now, export as DAE since AssimpSaver needs STGenericModel
+                                                    // TODO: Implement direct GLB export
+                                                    string daePath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + ".dae");
+                                                    var exportMethod = gfbmdl.GetType().GetMethod("ExportModel");
+                                                    if (exportMethod != null)
+                                                    {
+                                                        var settings = new DAE.ExportSettings();
+                                                        settings.SuppressConfirmDialog = true;
+                                                        exportMethod.Invoke(gfbmdl, new object[] { daePath, settings });
+                                                        Console.WriteLine("[Export] Model exported as DAE: " + daePath);
+                                                        Console.WriteLine("[Export] Note: GLB export requires additional implementation");
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
+                                break;
                             }
                         }
                     }
@@ -328,66 +366,14 @@ namespace AnimationRecorder
                         boneData.AppendLine("    }" + comma);
                     }
                     
-                    boneData.AppendLine("  ],");
-                    
-                    // Export animation data for each animation
-                    boneData.AppendLine("  \"animations\": [");
-                    
-                    int animIdx = 0;
-                    foreach (var anim in animNodes)
-                    {
-                        string animName = Path.GetFileNameWithoutExtension(anim.Text);
-                        Console.WriteLine("[Export]   Recording animation: " + animName);
-                        
-                        // Activate animation
-                        var animPanel = objectEditor.GetAnimationPanel();
-                        if (animPanel != null)
-                        {
-                            animPanel.LoadAnimation(anim);
-                            PumpEvents(100);
-                            
-                            boneData.AppendLine("    {");
-                            boneData.AppendLine("      \"name\": \"" + animName + "\",");
-                            boneData.AppendLine("      \"frameCount\": " + animPanel.FrameCount + ",");
-                            boneData.AppendLine("      \"frames\": [");
-                            
-                            // Record each frame
-                            for (int f = 0; f < animPanel.FrameCount; f++)
-                            {
-                                animPanel.SetFrame(f);
-                                Application.DoEvents();
-                                Thread.Sleep(10);
-                                
-                                boneData.AppendLine("        {");
-                                boneData.AppendLine("          \"frame\": " + f + ",");
-                                boneData.AppendLine("          \"bones\": [");
-                                
-                                for (int b = 0; b < skeleton.bones.Count; b++)
-                                {
-                                    var bone = skeleton.bones[b];
-                                    string boneComma = (b < skeleton.bones.Count - 1) ? "," : "";
-                                    boneData.AppendLine("            {\"pos\": {\"x\": " + bone.pos.X + ", \"y\": " + bone.pos.Y + ", \"z\": " + bone.pos.Z + "}, \"rot\": {\"x\": " + bone.rot.X + ", \"y\": " + bone.rot.Y + ", \"z\": " + bone.rot.Z + ", \"w\": " + bone.rot.W + "}, \"sca\": {\"x\": " + bone.sca.X + ", \"y\": " + bone.sca.Y + ", \"z\": " + bone.sca.Z + "}}" + boneComma);
-                                }
-                                
-                                string frameComma = (f < animPanel.FrameCount - 1) ? "," : "";
-                                boneData.AppendLine("          ]");
-                                boneData.AppendLine("        }" + frameComma);
-                            }
-                            
-                            string animComma = (animIdx < animNodes.Count - 1) ? "," : "";
-                            boneData.AppendLine("      ]");
-                            boneData.AppendLine("    }" + animComma);
-                            animIdx++;
-                        }
-                    }
-                    
                     boneData.AppendLine("  ]");
                     boneData.AppendLine("}");
                     
                     // Save to file
                     string exportPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + "_bones.json");
                     File.WriteAllText(exportPath, boneData.ToString());
-                    Console.WriteLine("[Export] Bone data exported to: " + exportPath);
+                    Console.WriteLine("[Export] Bone hierarchy exported to: " + exportPath);
+                    Console.WriteLine("[Export] Note: Animation export requires recording with --bone first");
                     return;
                 }
 
@@ -716,8 +702,25 @@ namespace AnimationRecorder
                             if (boneMode)
                             {
                                 string boneDirForVideo = Path.Combine(outputDir, animName, "bone", dirName);
-                                if (Directory.Exists(boneDirForVideo))
+                                Console.WriteLine("[Recorder] Bone video check: dir=" + boneDirForVideo + " exists=" + Directory.Exists(boneDirForVideo) + " ffmpeg=" + (!string.IsNullOrEmpty(ffmpeg)));
+                                if (Directory.Exists(boneDirForVideo) && !string.IsNullOrEmpty(ffmpeg))
                                 {
+                                    // Renumber bone frames (delete first frame, renumber rest)
+                                    var boneFrames = Directory.GetFiles(boneDirForVideo, "*.png").OrderBy(f => f).ToArray();
+                                    if (boneFrames.Length > 1)
+                                    {
+                                        // Delete first frame
+                                        File.Delete(boneFrames[0]);
+                                        // Renumber remaining
+                                        var remaining = Directory.GetFiles(boneDirForVideo, "*.png").OrderBy(f => f).ToArray();
+                                        for (int i = 0; i < remaining.Length; i++)
+                                        {
+                                            string newName = Path.Combine(boneDirForVideo, i.ToString("D6") + ".png");
+                                            if (remaining[i] != newName)
+                                                File.Move(remaining[i], newName);
+                                        }
+                                    }
+                                    
                                     string boneMp4 = Path.Combine(outputDir, animName, "bone", dirName + ".mp4");
                                     EncodeToMp4Png(ffmpeg, boneDirForVideo, boneMp4, fps);
                                     Console.WriteLine("[Recorder] Bone MP4: " + boneMp4);
