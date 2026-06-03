@@ -67,6 +67,7 @@ namespace AnimationRecorder
             bool grayMode = parsedArgs.ContainsKey("--gray");
             bool silhouetteMode = parsedArgs.ContainsKey("--silhouette");
             bool listBones = parsedArgs.ContainsKey("--list-bones");
+            bool exportModel = parsedArgs.ContainsKey("--export");
 
             if (!File.Exists(gfpakPath))
             {
@@ -80,7 +81,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, exportModel, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -92,7 +93,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, bool exportModel, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -241,6 +242,43 @@ namespace AnimationRecorder
                                     string parentName = b.parentIndex >= 0 ? skeleton.bones[b.parentIndex].Text : "none";
                                     string isEff = b.Text.StartsWith("Eff") ? " [EFF]" : "";
                                     Console.WriteLine("[BONES] " + i + ": " + b.Text + " -> " + parentName + isEff);
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // Export model mode
+                if (exportModel)
+                {
+                    string exportPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + ".dae");
+                    Console.WriteLine("[Export] Exporting model to: " + exportPath);
+                    
+                    // Find the GFBMDL model
+                    foreach (var dc in objectEditor.DrawableContainers)
+                    {
+                        Console.WriteLine("[Export] Container: " + dc.Name + " drawables: " + dc.Drawables.Count);
+                        foreach (var d in dc.Drawables)
+                        {
+                            Console.WriteLine("[Export]   Drawable: " + d.GetType().Name);
+                            var modelField = d.GetType().GetField("GfbmdlFile");
+                            if (modelField != null)
+                            {
+                                var gfbmdl = modelField.GetValue(d);
+                                Console.WriteLine("[Export]   GfbmdlFile: " + (gfbmdl != null));
+                                if (gfbmdl != null)
+                                {
+                                    // Call ExportModel
+                                    var exportMethod = gfbmdl.GetType().GetMethod("ExportModel");
+                                    Console.WriteLine("[Export]   ExportModel method: " + (exportMethod != null));
+                                    if (exportMethod != null)
+                                    {
+                                        var settings = new DAE.ExportSettings();
+                                        settings.SuppressConfirmDialog = true;
+                                        exportMethod.Invoke(gfbmdl, new object[] { exportPath, settings });
+                                        Console.WriteLine("[Export] Model exported successfully!");
+                                    }
                                 }
                             }
                         }
