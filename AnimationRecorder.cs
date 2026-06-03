@@ -68,6 +68,7 @@ namespace AnimationRecorder
             bool silhouetteMode = parsedArgs.ContainsKey("--silhouette");
             bool listBones = parsedArgs.ContainsKey("--list-bones");
             bool exportModel = parsedArgs.ContainsKey("--export");
+            bool exportBones = parsedArgs.ContainsKey("--export-bones");
 
             if (!File.Exists(gfpakPath))
             {
@@ -81,7 +82,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, exportModel, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, exportModel, exportBones, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -93,7 +94,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, bool exportModel, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, bool exportModel, bool exportBones, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -283,6 +284,110 @@ namespace AnimationRecorder
                             }
                         }
                     }
+                    return;
+                }
+
+                // Export bones/animation mode
+                if (exportBones)
+                {
+                    Console.WriteLine("[Export] Exporting bone data...");
+                    
+                    // Find skeleton
+                    STSkeleton skeleton = null;
+                    foreach (var dc in objectEditor.DrawableContainers)
+                    {
+                        foreach (var d in dc.Drawables)
+                        {
+                            if (d is STSkeleton) { skeleton = (STSkeleton)d; break; }
+                        }
+                        if (skeleton != null) break;
+                    }
+                    
+                    if (skeleton == null)
+                    {
+                        Console.WriteLine("[Export] No skeleton found!");
+                        return;
+                    }
+
+                    // Build bone hierarchy data
+                    var boneData = new System.Text.StringBuilder();
+                    boneData.AppendLine("{");
+                    boneData.AppendLine("  \"bones\": [");
+                    
+                    for (int i = 0; i < skeleton.bones.Count; i++)
+                    {
+                        var b = skeleton.bones[i];
+                        string comma = (i < skeleton.bones.Count - 1) ? "," : "";
+                        boneData.AppendLine("    {");
+                        boneData.AppendLine("      \"index\": " + i + ",");
+                        boneData.AppendLine("      \"name\": \"" + b.Text + "\",");
+                        boneData.AppendLine("      \"parent\": " + b.parentIndex + ",");
+                        boneData.AppendLine("      \"position\": {\"x\": " + b.Position.X + ", \"y\": " + b.Position.Y + ", \"z\": " + b.Position.Z + "},");
+                        boneData.AppendLine("      \"rotation\": {\"x\": " + b.Rotation.X + ", \"y\": " + b.Rotation.Y + ", \"z\": " + b.Rotation.Z + ", \"w\": " + b.Rotation.W + "},");
+                        boneData.AppendLine("      \"scale\": {\"x\": " + b.Scale.X + ", \"y\": " + b.Scale.Y + ", \"z\": " + b.Scale.Z + "}");
+                        boneData.AppendLine("    }" + comma);
+                    }
+                    
+                    boneData.AppendLine("  ],");
+                    
+                    // Export animation data for each animation
+                    boneData.AppendLine("  \"animations\": [");
+                    
+                    int animIdx = 0;
+                    foreach (var anim in animNodes)
+                    {
+                        string animName = Path.GetFileNameWithoutExtension(anim.Text);
+                        Console.WriteLine("[Export]   Recording animation: " + animName);
+                        
+                        // Activate animation
+                        var animPanel = objectEditor.GetAnimationPanel();
+                        if (animPanel != null)
+                        {
+                            animPanel.LoadAnimation(anim);
+                            PumpEvents(100);
+                            
+                            boneData.AppendLine("    {");
+                            boneData.AppendLine("      \"name\": \"" + animName + "\",");
+                            boneData.AppendLine("      \"frameCount\": " + animPanel.FrameCount + ",");
+                            boneData.AppendLine("      \"frames\": [");
+                            
+                            // Record each frame
+                            for (int f = 0; f < animPanel.FrameCount; f++)
+                            {
+                                animPanel.SetFrame(f);
+                                Application.DoEvents();
+                                Thread.Sleep(10);
+                                
+                                boneData.AppendLine("        {");
+                                boneData.AppendLine("          \"frame\": " + f + ",");
+                                boneData.AppendLine("          \"bones\": [");
+                                
+                                for (int b = 0; b < skeleton.bones.Count; b++)
+                                {
+                                    var bone = skeleton.bones[b];
+                                    string boneComma = (b < skeleton.bones.Count - 1) ? "," : "";
+                                    boneData.AppendLine("            {\"pos\": {\"x\": " + bone.pos.X + ", \"y\": " + bone.pos.Y + ", \"z\": " + bone.pos.Z + "}, \"rot\": {\"x\": " + bone.rot.X + ", \"y\": " + bone.rot.Y + ", \"z\": " + bone.rot.Z + ", \"w\": " + bone.rot.W + "}, \"sca\": {\"x\": " + bone.sca.X + ", \"y\": " + bone.sca.Y + ", \"z\": " + bone.sca.Z + "}}" + boneComma);
+                                }
+                                
+                                string frameComma = (f < animPanel.FrameCount - 1) ? "," : "";
+                                boneData.AppendLine("          ]");
+                                boneData.AppendLine("        }" + frameComma);
+                            }
+                            
+                            string animComma = (animIdx < animNodes.Count - 1) ? "," : "";
+                            boneData.AppendLine("      ]");
+                            boneData.AppendLine("    }" + animComma);
+                            animIdx++;
+                        }
+                    }
+                    
+                    boneData.AppendLine("  ]");
+                    boneData.AppendLine("}");
+                    
+                    // Save to file
+                    string exportPath = Path.Combine(outputDir, Path.GetFileNameWithoutExtension(gfpakPath) + "_bones.json");
+                    File.WriteAllText(exportPath, boneData.ToString());
+                    Console.WriteLine("[Export] Bone data exported to: " + exportPath);
                     return;
                 }
 
@@ -606,6 +711,18 @@ namespace AnimationRecorder
                             string mp4Path = Path.Combine(outputDir, animName, dirName + ".mp4");
                             EncodeToMp4(ffmpeg, animDir, mp4Path, fps);
                             Console.WriteLine("[Recorder] MP4: " + mp4Path);
+
+                            // Also encode bone video if bone mode
+                            if (boneMode)
+                            {
+                                string boneDirForVideo = Path.Combine(outputDir, animName, "bone", dirName);
+                                if (Directory.Exists(boneDirForVideo))
+                                {
+                                    string boneMp4 = Path.Combine(outputDir, animName, "bone", dirName + ".mp4");
+                                    EncodeToMp4Png(ffmpeg, boneDirForVideo, boneMp4, fps);
+                                    Console.WriteLine("[Recorder] Bone MP4: " + boneMp4);
+                                }
+                            }
                         }
                     }
 
@@ -890,6 +1007,41 @@ namespace AnimationRecorder
                 using (Process process = Process.Start(psi))
                 {
                     bool exited = process.WaitForExit(60000); // 60 second timeout
+                    if (!exited)
+                    {
+                        process.Kill();
+                        Console.Error.WriteLine("[ERROR] FFmpeg timed out for " + outputPath);
+                    }
+                    else if (process.ExitCode != 0)
+                    {
+                        Console.Error.WriteLine("[ERROR] FFmpeg failed with code " + process.ExitCode);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[ERROR] FFmpeg: " + ex.Message);
+            }
+        }
+
+        static void EncodeToMp4Png(string ffmpeg, string framesDir, string outputPath, int fps)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            string pattern = Path.Combine(framesDir, "%06d.png");
+
+            Console.WriteLine("[Recorder] Encoding " + Path.GetFileName(outputPath) + "...");
+
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = ffmpeg;
+            psi.Arguments = "-framerate " + fps + " -i \"" + pattern + "\" -vf \"pad=ceil(iw/2)*2:ceil(ih/2)*2\" -c:v libx264 -pix_fmt yuv420p -y \"" + outputPath + "\"";
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+
+            try
+            {
+                using (Process process = Process.Start(psi))
+                {
+                    bool exited = process.WaitForExit(60000);
                     if (!exited)
                     {
                         process.Kill();
