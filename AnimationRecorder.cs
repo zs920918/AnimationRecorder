@@ -694,16 +694,19 @@ namespace AnimationRecorder
 
                         if (!string.IsNullOrEmpty(ffmpeg))
                         {
-                            string mp4Path = Path.Combine(outputDir, animName, dirName + ".mp4");
-                            EncodeToMp4(ffmpeg, animDir, mp4Path, fps);
-                            Console.WriteLine("[Recorder] MP4: " + mp4Path);
+                            // Only encode regular video when NOT in bone mode
+                            if (!boneMode)
+                            {
+                                string mp4Path = Path.Combine(outputDir, animName, dirName + ".mp4");
+                                EncodeToMp4(ffmpeg, animDir, mp4Path, fps);
+                                Console.WriteLine("[Recorder] MP4: " + mp4Path);
+                            }
 
-                            // Also encode bone video if bone mode
+                            // Encode bone video if bone mode
                             if (boneMode)
                             {
                                 string boneDirForVideo = Path.Combine(outputDir, animName, "bone", dirName);
-                                Console.WriteLine("[Recorder] Bone video check: dir=" + boneDirForVideo + " exists=" + Directory.Exists(boneDirForVideo) + " ffmpeg=" + (!string.IsNullOrEmpty(ffmpeg)));
-                                if (Directory.Exists(boneDirForVideo) && !string.IsNullOrEmpty(ffmpeg))
+                                if (Directory.Exists(boneDirForVideo))
                                 {
                                     // Renumber bone frames (delete first frame, renumber rest)
                                     var boneFrames = Directory.GetFiles(boneDirForVideo, "*.png").OrderBy(f => f).ToArray();
@@ -1395,11 +1398,16 @@ namespace AnimationRecorder
                 
                 if (skeleton == null || skeleton.bones.Count == 0) return;
 
-                // Set black background for bone mode
+                // Force render to update animation state
+                viewport.GL_Control.Refresh();
+                Application.DoEvents();
+                Thread.Sleep(50);
+
+                // Set white background for bone mode
                 var origTop = Runtime.backgroundGradientTop;
                 var origBot = Runtime.backgroundGradientBottom;
-                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(0, 0, 0);
-                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(0, 0, 0);
+                Runtime.backgroundGradientTop = System.Drawing.Color.FromArgb(255, 255, 255);
+                Runtime.backgroundGradientBottom = System.Drawing.Color.FromArgb(255, 255, 255);
 
                 // Force a render with black background
                 viewport.GL_Control.Refresh();
@@ -1478,12 +1486,12 @@ namespace AnimationRecorder
                     {
                         using (Graphics g = Graphics.FromImage(resized))
                         {
-                            // Clear to black background
-                            g.Clear(System.Drawing.Color.Black);
+                            // Clear to white background
+                            g.Clear(System.Drawing.Color.White);
                             
                             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
 
-                            Pen bonePen = new Pen(Color.Yellow, 2);
+                            Pen bonePen = new Pen(Color.Black, 2);
                             Brush jointBrush = Brushes.Red;
 
                             int drawnBones = 0;
@@ -1491,20 +1499,27 @@ namespace AnimationRecorder
                             {
                                 if (bone.parentIndex < 0 || bone.parentIndex >= skeleton.bones.Count) continue;
                                 
-                                // Skip Eff/helper bones, BodySkin, Feelers (vines), and root children
+                                // Skip Eff/helper bones, BodySkin, and root motion bones
                                 if (bone.Text.StartsWith("Eff")) continue;
                                 if (bone.Text.Contains("Skin")) continue;
-                                if (bone.Text.Contains("Feeler")) continue;
-                                if (bone.parentIndex == 0) continue;
+                                if (bone.Text == "Waist" || bone.Text == "Origin") continue;
                                 
                                 var parent = skeleton.bones[bone.parentIndex];
-                                if (parent.parentIndex == 0) continue;
                                 
-                                // Also skip if parent name contains Feeler
-                                if (parent.Text.Contains("Feeler")) continue;
+                                // Also skip if parent is root motion bone
+                                if (parent.Text == "Waist" || parent.Text == "Origin") continue;
 
-                                Vector3 bonePos = bone.Transform.ExtractTranslation();
-                                Vector3 parentPos = parent.Transform.ExtractTranslation();
+                                // Compute world positions manually
+                                Vector3 bonePos = GetBoneWorldPosition(skeleton, bone);
+                                Vector3 parentPos = GetBoneWorldPosition(skeleton, parent);
+
+                                // Debug first few bones
+                                if (drawnBones < 3)
+                                {
+                                    Console.WriteLine("[BONE] " + bone.Text + " local=" + bone.pos + " world=" + bonePos);
+                                    Console.WriteLine("[BONE]   parent=" + parent.Text + " local=" + parent.pos + " world=" + parentPos);
+                                    Console.WriteLine("[BONE]   parent.rot=" + parent.rot);
+                                }
 
                                 Vector4 clipBone = new Vector4(bonePos, 1) * mvp;
                                 Vector4 clipParent = new Vector4(parentPos, 1) * mvp;
@@ -1519,6 +1534,10 @@ namespace AnimationRecorder
                                     g.DrawLine(bonePen, px, py, sx, sy);
                                     g.FillEllipse(jointBrush, sx - 3, sy - 3, 6, 6);
                                     drawnBones++;
+                                    
+                                    // Debug first bone
+                                    if (drawnBones == 1)
+                                        Console.WriteLine("[BONE] First bone: (" + px + "," + py + ") -> (" + sx + "," + sy + ")");
                                 }
                             }
 
@@ -1538,6 +1557,13 @@ namespace AnimationRecorder
             {
                 Console.WriteLine("[WARN] Bone render: " + ex.Message);
             }
+        }
+
+        static Vector3 GetBoneWorldPosition(STSkeleton skeleton, STBone bone)
+        {
+            // Use the computed Transform which includes animation + parent chain
+            // skeleton.update() should have been called by the animation system
+            return bone.Transform.ExtractTranslation();
         }
 
         static Dictionary<string, string> ParseArgs(string[] args)
