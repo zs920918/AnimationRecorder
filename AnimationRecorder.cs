@@ -69,6 +69,7 @@ namespace AnimationRecorder
             bool listBones = parsedArgs.ContainsKey("--list-bones");
             bool exportModel = parsedArgs.ContainsKey("--export");
             bool exportBones = parsedArgs.ContainsKey("--export-bones");
+            string skipBones = parsedArgs.ContainsKey("--skip-bones") ? parsedArgs["--skip-bones"] : "";
 
             if (!File.Exists(gfpakPath))
             {
@@ -82,7 +83,7 @@ namespace AnimationRecorder
 
             try
             {
-                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, exportModel, exportBones, parsedArgs);
+                RunRecording(gfpakPath, outputDir, width, height, fps, allDirections, directionStr, ffmpegPath, camOffsetY, camOffsetX, camFov, camDistance, animFilter, brightness, trackModel, boneMode, normalMode, grayMode, silhouetteMode, listBones, exportModel, exportBones, skipBones, parsedArgs);
             }
             catch (Exception ex)
             {
@@ -94,7 +95,7 @@ namespace AnimationRecorder
         static void RunRecording(string gfpakPath, string outputDir, int width, int height, int fps,
                                   bool allDirections, string directionStr, string ffmpegPath,
                                   float camOffsetY, float camOffsetX, float camFov, float camDistance,
-                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, bool exportModel, bool exportBones, Dictionary<string, string> parsedArgs)
+                                  string animFilter, float brightness, bool trackModel, bool boneMode, bool normalMode, bool grayMode, bool silhouetteMode, bool listBones, bool exportModel, bool exportBones, string skipBones, Dictionary<string, string> parsedArgs)
         {
             Directory.CreateDirectory(outputDir);
 
@@ -653,7 +654,7 @@ namespace AnimationRecorder
                             // Bone mode: render skeleton-only frame
                             if (boneMode)
                             {
-                                RenderBoneFrame(viewport, width, height, animDir, frame);
+                                RenderBoneFrame(viewport, width, height, animDir, frame, skipBones, outputDir, animName);
                             }
 
                             // Normal mode: render normal map (RGB = normal direction)
@@ -1370,7 +1371,7 @@ namespace AnimationRecorder
             return result;
         }
 
-        static void RenderBoneFrame(Viewport viewport, int width, int height, string animDir, int frame)
+        static void RenderBoneFrame(Viewport viewport, int width, int height, string animDir, int frame, string skipBones, string outputDir, string animName)
         {
             try
             {
@@ -1397,6 +1398,59 @@ namespace AnimationRecorder
                 }
                 
                 if (skeleton == null || skeleton.bones.Count == 0) return;
+
+                // Parse skip bones list
+                HashSet<string> skipBoneSet = new HashSet<string>();
+                if (!string.IsNullOrEmpty(skipBones))
+                {
+                    foreach (var name in skipBones.Split(','))
+                    {
+                        string trimmed = name.Trim();
+                        if (!string.IsNullOrEmpty(trimmed))
+                            skipBoneSet.Add(trimmed);
+                    }
+                }
+
+                // Generate bone list file on first frame
+                if (frame == 0)
+                {
+                    string boneListPath = Path.Combine(animDirParent, "bone", animName + "_bones.txt");
+                    using (System.IO.StreamWriter sw = new System.IO.StreamWriter(boneListPath, false, System.Text.Encoding.UTF8))
+                    {
+                        sw.WriteLine("# Bone list for " + animName);
+                        sw.WriteLine("# Total bones: " + skeleton.bones.Count);
+                        sw.WriteLine("# Format: index: name -> parent_name");
+                        sw.WriteLine("# Use --skip-bones name1,name2 to remove specific bones");
+                        sw.WriteLine("");
+                        
+                        int displayedCount = 0;
+                        for (int i = 0; i < skeleton.bones.Count; i++)
+                        {
+                            var b = skeleton.bones[i];
+                            string parentName = b.parentIndex >= 0 && b.parentIndex < skeleton.bones.Count ? skeleton.bones[b.parentIndex].Text : "none";
+                            bool skipped = false;
+                            string skipReason = "";
+                            
+                            if (b.Text.StartsWith("Eff")) { skipped = true; skipReason = "[EFF]"; }
+                            else if (b.Text.Contains("Skin")) { skipped = true; skipReason = "[SKIN]"; }
+                            else if (b.Text == "Waist" || b.Text == "Origin") { skipped = true; skipReason = "[ROOT]"; }
+                            else if (skipBoneSet.Contains(b.Text)) { skipped = true; skipReason = "[USER]"; }
+                            
+                            string status = skipped ? "SKIP " + skipReason : "SHOW";
+                            sw.WriteLine(i.ToString("D2") + ": " + b.Text + " -> " + parentName + "  " + status);
+                            
+                            if (!skipped) displayedCount++;
+                        }
+                        
+                        sw.WriteLine("");
+                        sw.WriteLine("# Displayed bones: " + displayedCount);
+                        if (skipBoneSet.Count > 0)
+                        {
+                            sw.WriteLine("# User skipped: " + string.Join(", ", skipBoneSet));
+                        }
+                    }
+                    Console.WriteLine("[BONE] Bone list saved to: " + boneListPath);
+                }
 
                 // Force render to update animation state
                 viewport.GL_Control.Refresh();
@@ -1495,6 +1549,7 @@ namespace AnimationRecorder
                             Brush jointBrush = Brushes.Red;
 
                             int drawnBones = 0;
+                            List<string> drawnBoneNames = new List<string>();
                             foreach (var bone in skeleton.bones)
                             {
                                 if (bone.parentIndex < 0 || bone.parentIndex >= skeleton.bones.Count) continue;
@@ -1504,10 +1559,16 @@ namespace AnimationRecorder
                                 if (bone.Text.Contains("Skin")) continue;
                                 if (bone.Text == "Waist" || bone.Text == "Origin") continue;
                                 
+                                // Skip user-specified bones
+                                if (skipBoneSet.Contains(bone.Text)) continue;
+                                
                                 var parent = skeleton.bones[bone.parentIndex];
                                 
                                 // Also skip if parent is root motion bone
                                 if (parent.Text == "Waist" || parent.Text == "Origin") continue;
+                                
+                                // Skip if parent is user-specified
+                                if (skipBoneSet.Contains(parent.Text)) continue;
 
                                 // Compute world positions manually
                                 Vector3 bonePos = GetBoneWorldPosition(skeleton, bone);
@@ -1534,6 +1595,8 @@ namespace AnimationRecorder
                                     g.DrawLine(bonePen, px, py, sx, sy);
                                     g.FillEllipse(jointBrush, sx - 3, sy - 3, 6, 6);
                                     drawnBones++;
+                                    if (!drawnBoneNames.Contains(bone.Text))
+                                        drawnBoneNames.Add(bone.Text);
                                     
                                     // Debug first bone
                                     if (drawnBones == 1)
@@ -1614,6 +1677,13 @@ namespace AnimationRecorder
             Console.WriteLine("  --cam-distance <n>    Distance multiplier (default: 1.0, larger = further away)");
             Console.WriteLine("  --brightness <n>      Brightness multiplier (default: 1.0, 1.5=brighter, 0.5=darker)");
             Console.WriteLine("  --track               Enable camera tracking (follow model root bone each frame)");
+            Console.WriteLine();
+            Console.WriteLine("Bone options:");
+            Console.WriteLine("  --bone                Record skeleton animation (white bg, black lines)");
+            Console.WriteLine("  --skip-bones <names>  Skip specific bones (comma-separated, e.g. --skip-bones Jaw,LEar)");
+            Console.WriteLine("  --list-bones          List all bone names and exit");
+            Console.WriteLine("  --export              Export model as DAE file");
+            Console.WriteLine("  --export-bones        Export bone hierarchy as JSON");
             Console.WriteLine();
             Console.WriteLine("Debug:");
             Console.WriteLine("  --test8               Test mode: 9 direction screenshots, 1 frame each");
